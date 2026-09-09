@@ -1,8 +1,14 @@
-import streamlit as st
+mport streamlit as st
 import requests
 import pandas as pd
+import json
+from pathlib import Path
 from datetime import datetime, timedelta
 
+
+# ============================================================
+# CONFIGURAZIONE
+# ============================================================
 
 st.set_page_config(
     page_title="AgriSmart",
@@ -12,9 +18,8 @@ st.set_page_config(
 st.title("🚜 Dashboard")
 
 
-# ============================================================
-# CONFIGURAZIONE COLTURE
-# ============================================================
+FILE_DATI = Path("agri_data.json")
+
 
 DIZIONARIO = {
     "Pomodoro": {
@@ -51,23 +56,172 @@ DIZIONARIO = {
 
 
 # ============================================================
-# SESSION STATE
+# PERSISTENZA
 # ============================================================
 
-if "campi" not in st.session_state:
-    st.session_state.campi = [
-        {
-            "nome": "Campo Nord",
-            "lat": 41.9028,
-            "lon": 12.4964,
-            "coltura": "Pomodoro",
-            "portata": 15.0,
-            "data_semina": datetime.now().strftime("%Y-%m-%d")
-        }
-    ]
+def salva_dati():
+    dati = {
+        "campi": st.session_state.campi,
+        "archivio": st.session_state.archivio
+    }
 
-if "archivio" not in st.session_state:
-    st.session_state.archivio = []
+    try:
+        FILE_DATI.write_text(
+            json.dumps(
+                dati,
+                ensure_ascii=False,
+                indent=2
+            ),
+            encoding="utf-8"
+        )
+    except Exception as e:
+        st.error(f"Errore salvataggio dati: {e}")
+
+
+def carica_dati():
+    if not FILE_DATI.exists():
+        return {
+            "campi": [],
+            "archivio": []
+        }
+
+    try:
+        dati = json.loads(
+            FILE_DATI.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        return {
+            "campi": dati.get("campi", []),
+            "archivio": dati.get("archivio", [])
+        }
+
+    except Exception:
+        return {
+            "campi": [],
+            "archivio": []
+        }
+
+
+if "dati_caricati" not in st.session_state:
+
+    dati = carica_dati()
+
+    st.session_state.campi = dati["campi"]
+    st.session_state.archivio = dati["archivio"]
+
+    if not st.session_state.campi and not st.session_state.archivio:
+        st.session_state.campi = [
+            {
+                "nome": "Campo Nord",
+                "lat": 41.9028,
+                "lon": 12.4964,
+                "coltura": "Pomodoro",
+                "portata": 15.0,
+                "data_semina": datetime.now().strftime("%Y-%m-%d"),
+                "registro": []
+            }
+        ]
+
+    for campo in st.session_state.campi:
+        campo.setdefault("registro", [])
+
+    for campo in st.session_state.archivio:
+        campo.setdefault("registro", [])
+
+    st.session_state.dati_caricati = True
+
+
+# ============================================================
+# FUNZIONI REGISTRO
+# ============================================================
+
+def registra_giornata(campo, dati_giorno):
+    """
+    Aggiunge automaticamente una sola registrazione per campo e giorno.
+    Se il giorno è già presente, aggiorna la registrazione.
+    """
+
+    data = dati_giorno["data"]
+
+    registro = campo.setdefault("registro", [])
+
+    esistente = None
+
+    for riga in registro:
+        if riga.get("data") == data:
+            esistente = riga
+            break
+
+    if esistente:
+        esistente.update(dati_giorno)
+    else:
+        registro.append(dati_giorno)
+
+    registro.sort(
+        key=lambda x: x.get("data", "")
+    )
+
+
+def dati_registro(campo, dati_giorno):
+    """
+    Costruisce una riga completa del registro giornaliero.
+    """
+
+    return {
+        "data": dati_giorno["data"],
+        "ora_rilevazione": dati_giorno["ora_rilevazione"],
+        "stato": dati_giorno["stato"],
+        "temperatura": round(dati_giorno["temperatura"], 1),
+        "umidita_aria": round(dati_giorno["umidita_aria"], 1),
+        "pioggia": round(dati_giorno["pioggia"], 1),
+        "vento": round(dati_giorno["vento"], 1),
+        "radiazione": round(dati_giorno["radiazione"], 1),
+        "umidita_suolo": round(dati_giorno["umidita_suolo"], 3),
+        "pioggia_giornaliera": round(
+            dati_giorno["pioggia_giornaliera"],
+            1
+        ),
+        "inizio": dati_giorno["inizio"],
+        "fine": dati_giorno["fine"],
+        "erogata": round(dati_giorno["erogata"], 1),
+        "risparmiata": round(dati_giorno["risparmiata"], 1)
+    }
+
+
+def mostra_registro(campo):
+    registro = campo.get("registro", [])
+
+    if not registro:
+        st.info("Nessuna registrazione disponibile.")
+        return
+
+    righe = []
+
+    for r in reversed(registro):
+        righe.append({
+            "Data": r.get("data", ""),
+            "Ora": r.get("ora_rilevazione", ""),
+            "Stato": r.get("stato", ""),
+            "Temp.": f"{r.get('temperatura', 0):.1f} °C",
+            "Umidità aria": f"{r.get('umidita_aria', 0):.1f} %",
+            "Pioggia": f"{r.get('pioggia', 0):.1f} mm",
+            "Vento": f"{r.get('vento', 0):.1f} km/h",
+            "Radiazione": f"{r.get('radiazione', 0):.0f} W/m²",
+            "Umidità suolo": f"{r.get('umidita_suolo', 0):.3f}",
+            "Pioggia giorno": f"{r.get('pioggia_giornaliera', 0):.1f} mm",
+            "Inizio": r.get("inizio", ""),
+            "Fine": r.get("fine", ""),
+            "Erogata": f"{r.get('erogata', 0):.1f} mm",
+            "Risparmiata": f"{r.get('risparmiata', 0):.1f} mm"
+        })
+
+    st.dataframe(
+        pd.DataFrame(righe),
+        use_container_width=True,
+        hide_index=True
+    )
 
 
 # ============================================================
@@ -120,10 +274,18 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "lon": n_lon,
             "coltura": n_colt,
             "portata": n_port,
-            "data_semina": n_data.strftime("%Y-%m-%d")
+            "data_semina": n_data.strftime("%Y-%m-%d"),
+            "registro": []
         })
 
+        salva_dati()
         st.rerun()
+
+
+if st.sidebar.button("💾 Salva dati"):
+
+    salva_dati()
+    st.sidebar.success("Dati salvati.")
 
 
 if st.sidebar.button("🗑️ Svuota"):
@@ -131,6 +293,7 @@ if st.sidebar.button("🗑️ Svuota"):
     st.session_state.campi = []
     st.session_state.archivio = []
 
+    salva_dati()
     st.rerun()
 
 
@@ -157,12 +320,14 @@ with t_mon:
 
     else:
 
-        for idx, campo in enumerate(st.session_state.campi):
+        for idx, campo in enumerate(
+            st.session_state.campi
+        ):
 
             info = DIZIONARIO[campo["coltura"]]
 
             with st.expander(
-                f"🌿 {campo['nome']}",
+                f"🌿 {campo['nome']} — {campo['coltura']}",
                 expanded=True
             ):
 
@@ -193,7 +358,10 @@ with t_mon:
                         timeout=10
                     ).json()
 
-                    cur = res.get("current", {})
+                    cur = res.get(
+                        "current",
+                        {}
+                    )
 
                     temp = cur.get(
                         "temperature_2m",
@@ -210,13 +378,11 @@ with t_mon:
                         0.0
                     )
 
-                    # Velocità vento
                     vent = cur.get(
                         "wind_speed_10m",
                         0.0
                     )
 
-                    # Radiazione solare
                     rads = cur.get(
                         "shortwave_radiation",
                         0.0
@@ -263,13 +429,13 @@ with t_mon:
                     )
 
                     p_dom = (
-                        p_prev[1]
-                        if len(p_prev) > 1
+                        p_prev[0]
+                        if p_prev
                         else 0.0
                     )
 
                     # ====================================================
-                    # RIEPILOGO METEO
+                    # RIEPILOGO
                     # ====================================================
 
                     st.write("### 🌤️ Condizioni attuali")
@@ -314,13 +480,17 @@ with t_mon:
                     sogl = info["soglia_umidita"]
                     gg_m = info["giorni_maturazione"]
 
+                    oggi = datetime.now().strftime(
+                        "%Y-%m-%d"
+                    )
+
                     g_irr = datetime.now().strftime(
                         "%d/%m/%Y"
                     )
 
-                    # ----------------------------------------------------
-                    # Pioggia sufficiente
-                    # ----------------------------------------------------
+                    ora_rilevazione = datetime.now().strftime(
+                        "%H:%M:%S"
+                    )
 
                     if (
                         piog >= fabb
@@ -334,10 +504,6 @@ with t_mon:
                         a_smr = 0.0
 
                         risp = fabb
-
-                    # ----------------------------------------------------
-                    # Terreno sotto soglia
-                    # ----------------------------------------------------
 
                     elif soil < sogl:
 
@@ -374,10 +540,6 @@ with t_mon:
                             fabb - a_smr
                         )
 
-                    # ----------------------------------------------------
-                    # Terreno sufficiente
-                    # ----------------------------------------------------
-
                     else:
 
                         s_irr = "✅ Sospesa"
@@ -389,6 +551,39 @@ with t_mon:
                         risp = fabb
 
                     # ====================================================
+                    # REGISTRAZIONE AUTOMATICA GIORNALIERA
+                    # ====================================================
+
+                    dati_giorno = {
+                        "data": oggi,
+                        "ora_rilevazione": ora_rilevazione,
+                        "stato": s_irr,
+                        "temperatura": temp,
+                        "umidita_aria": umid,
+                        "pioggia": piog,
+                        "vento": vent,
+                        "radiazione": rads,
+                        "umidita_suolo": soil,
+                        "pioggia_giornaliera": p_dom,
+                        "inizio": "06:00",
+                        "fine": o_fin,
+                        "erogata": a_smr,
+                        "risparmiata": risp
+                    }
+
+                    registra_giornata(
+                        campo,
+                        dati_registro(
+                            campo,
+                            dati_giorno
+                        )
+                    )
+
+                    # Salvataggio automatico.
+                    # La stessa data viene aggiornata e non duplicata.
+                    salva_dati()
+
+                    # ====================================================
                     # PARAMETRI D'INTERVENTO GIORNALIERI
                     # ====================================================
 
@@ -396,65 +591,55 @@ with t_mon:
                         "### 📋 Parametri d'Intervento Giornalieri"
                     )
 
-                    # La tabella viene costruita ORIZZONTALMENTE:
-                    # una riga = un giorno/intervento
-                    # colonne = tutti i parametri rilevati/calcolati.
-
-                    df_oriz = pd.DataFrame({
-                        "Stato": [
-                            s_irr
-                        ],
-
-                        "Giorno": [
-                            g_irr
-                        ],
-
+                    df_oggi = pd.DataFrame({
+                        "Stato": [s_irr],
+                        "Giorno": [g_irr],
                         "Temp. Aria": [
                             f"{temp:.1f} °C"
                         ],
-
                         "Umidità Aria": [
                             f"{umid:.0f} %"
                         ],
-
                         "Pioggia": [
                             f"{piog:.1f} mm"
                         ],
-
                         "Vento": [
                             f"{vent:.1f} km/h"
                         ],
-
                         "Radiazione Solare": [
                             f"{rads:.0f} W/m²"
                         ],
-
                         "Umidità Suolo": [
                             f"{soil:.3f}"
                         ],
-
-                        "Inizio": [
-                            "06:00"
+                        "Pioggia Giorno": [
+                            f"{p_dom:.1f} mm"
                         ],
-
-                        "Fine": [
-                            o_fin
-                        ],
-
+                        "Inizio": ["06:00"],
+                        "Fine": [o_fin],
                         "Erogata": [
                             f"{a_smr:.1f} mm"
                         ],
-
                         "Risparmiata": [
                             f"{risp:.1f} mm"
                         ]
                     })
 
                     st.dataframe(
-                        df_oriz,
+                        df_oggi,
                         use_container_width=True,
                         hide_index=True
                     )
+
+                    # ====================================================
+                    # REGISTRO CRONOLOGICO DEL CAMPO
+                    # ====================================================
+
+                    st.write(
+                        "### 📚 Registro cronologico del campo"
+                    )
+
+                    mostra_registro(campo)
 
                     # ====================================================
                     # GRAFICO UMIDITÀ SUOLO
@@ -554,15 +739,13 @@ with t_mon:
 
                         if btn:
 
-                            campo[
-                                "data_raccolto"
-                            ] = datetime.now().strftime(
-                                "%d/%m/%Y"
+                            campo["data_raccolto"] = (
+                                datetime.now().strftime(
+                                    "%d/%m/%Y"
+                                )
                             )
 
-                            campo[
-                                "quintali"
-                            ] = q_rac
+                            campo["quintali"] = q_rac
 
                             campo["note"] = (
                                 n_rac
@@ -570,16 +753,52 @@ with t_mon:
                                 else "Standard"
                             )
 
+                            # Salviamo nel registro anche l'evento
+                            # di raccolta, mantenendo la cronologia.
+                            campo.setdefault(
+                                "registro",
+                                []
+                            ).append({
+                                "data": oggi,
+                                "ora_rilevazione": (
+                                    datetime.now().strftime(
+                                        "%H:%M:%S"
+                                    )
+                                ),
+                                "stato": "🎉 RACCOLTA",
+                                "temperatura": temp,
+                                "umidita_aria": umid,
+                                "pioggia": piog,
+                                "vento": vent,
+                                "radiazione": rads,
+                                "umidita_suolo": soil,
+                                "pioggia_giornaliera": p_dom,
+                                "inizio": "",
+                                "fine": "",
+                                "erogata": 0.0,
+                                "risparmiata": 0.0,
+                                "quintali": q_rac,
+                                "note": (
+                                    n_rac
+                                    if n_rac
+                                    else "Standard"
+                                )
+                            })
+
+                            # Il campo raccolto passa nello storico
+                            # mantenendo TUTTO il registro.
                             st.session_state.archivio.append(
-                                campo
+                                campo.copy()
                             )
 
                             st.session_state.campi.pop(
                                 idx
                             )
 
+                            salva_dati()
+
                             st.success(
-                                "Archiviato!"
+                                "Campo archiviato con registro completo!"
                             )
 
                             st.rerun()
@@ -587,7 +806,7 @@ with t_mon:
                 except Exception as e:
 
                     st.error(
-                        f"Err: {e}"
+                        f"Errore dati meteo: {e}"
                     )
 
 
@@ -624,7 +843,7 @@ with t_map:
 
 with t_arc:
 
-    st.write("## 🗄️ Storico")
+    st.write("## 🗄️ Storico campi")
 
     if not st.session_state.archivio:
 
@@ -632,20 +851,52 @@ with t_arc:
 
     else:
 
-        l_arc = [
-            {
-                "Campo": a["nome"],
-                "Coltura": a["coltura"],
-                "Semina": a["data_semina"],
-                "Raccolto": a["data_raccolto"],
-                "Q.li": f"{a['quintali']:.1f}",
-                "Note": a["note"]
-            }
-            for a in st.session_state.archivio
-        ]
+        for campo in st.session_state.archivio:
 
-        st.dataframe(
-            pd.DataFrame(l_arc),
-            use_container_width=True,
-            hide_index=True
-        )
+            with st.expander(
+                f"🌾 {campo['nome']} — {campo['coltura']}",
+                expanded=False
+            ):
+
+                c1, c2, c3 = st.columns(3)
+
+                c1.metric(
+                    "Quintali",
+                    f"{campo.get('quintali', 0):.1f}"
+                )
+
+                c2.metric(
+                    "Semina",
+                    campo.get(
+                        "data_semina",
+                        "-"
+                    )
+                )
+
+                c3.metric(
+                    "Raccolto",
+                    campo.get(
+                        "data_raccolto",
+                        "-"
+                    )
+                )
+
+                st.write(
+                    f"**Note:** {campo.get('note', '-')}"
+                )
+
+                st.write(
+                    "### 📚 Registro cronologico completo"
+                )
+
+                mostra_registro(campo)
+
+
+# ============================================================
+# NOTA PERSISTENZA
+# ============================================================
+
+st.sidebar.caption(
+    "💾 Il registro giornaliero viene salvato "
+    "automaticamente in agri_data.json"
+)
