@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import requests
 import pandas as pd
@@ -650,4 +649,3 @@ with t_arc:
             use_container_width=True,
             hide_index=True
         )
-```
