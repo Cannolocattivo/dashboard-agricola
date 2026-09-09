@@ -81,11 +81,13 @@ else:
             st.subheader(f"Analisi Campo: {campo['nome']} | Coltura attuale: {campo['coltura']}")
             st.caption(f"Coordinate GPS: {campo['lat']}, {campo['lon']} | Impianto: {campo['portata']} l/h/mq")
             
-            # URL CORRETTO E COSTRUTTO IN MODO SICURO
-            url_meteo = f"https://open-meteo.com{campo['lat']}&longitude={campo['lon']}&current=temperature_2m,relative_humidity_2m,rain&hourly=soil_moisture_3_to_9cm&timezone=auto"
+            # COSTRUZIONE DI SICUREZZA DELL'URL SENZA INVERSIONE DI CARATTERI
+            lat_str = str(campo['lat']).strip()
+            lon_str = str(campo['lon']).strip()
+            url_meteo = f"https://open-meteo.com{lat_str}&longitude={lon_str}&current=temperature_2m,relative_humidity_2m,rain&hourly=soil_moisture_3_to_9cm&timezone=auto"
             
             try:
-                res = requests.get(url_meteo, timeout=7).json()
+                res = requests.get(url_meteo, timeout=10).json()
                 
                 if "current" in res and "hourly" in res:
                     current = res["current"]
