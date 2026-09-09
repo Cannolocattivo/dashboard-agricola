@@ -1,1203 +1,871 @@
 import streamlit as st
 import requests
 import pandas as pd
+import sqlite3
 from datetime import datetime, timedelta
 
+st.set_page_config(page_title="Smart Farming Dashboard", layout="wide")
+st.title("🚜 Smart Farming Dashboard")
 
-st.set_page_config(
-    page_title="Dashboard Agricola Professionale",
-    layout="wide"
-)
-
-st.title(
-    "🚜 Smart Farming Dashboard: "
-    "Monitoraggio, Mappe & Gestione Cicli"
-)
-
-
-DIZIONARIO_LOCALE = {
-    "Pomodoro": {
-        "fabbisogno": 5.0,
-        "soglia_umidita": 0.25,
-        "giorni_maturazione": 100
-    },
-    "Mais": {
-        "fabbisogno": 6.0,
-        "soglia_umidita": 0.22,
-        "giorni_maturazione": 120
-    },
-    "Olivo": {
-        "fabbisogno": 2.0,
-        "soglia_umidita": 0.15,
-        "giorni_maturazione": 210
-    },
-    "Vite": {
-        "fabbisogno": 2.5,
-        "soglia_umidita": 0.16,
-        "giorni_maturazione": 150
-    },
-    "Patata": {
-        "fabbisogno": 4.5,
-        "soglia_umidita": 0.24,
-        "giorni_maturazione": 110
-    },
-    "Grano": {
-        "fabbisogno": 3.5,
-        "soglia_umidita": 0.18,
-        "giorni_maturazione": 240
-    }
+CROP_DATA = {
+    "Tomato": {"water_need": 5.0, "soil_threshold": 0.25, "maturity_days": 100},
+    "Corn": {"water_need": 6.0, "soil_threshold": 0.22, "maturity_days": 120},
+    "Olive": {"water_need": 2.0, "soil_threshold": 0.15, "maturity_days": 210},
+    "Grape": {"water_need": 2.5, "soil_threshold": 0.16, "maturity_days": 150},
+    "Potato": {"water_need": 4.5, "soil_threshold": 0.24, "maturity_days": 110},
+    "Wheat": {"water_need": 3.5, "soil_threshold": 0.18, "maturity_days": 240}
 }
 
-
-TIPI_TERRENO = [
-    "Argilloso",
-    "Sabbioso",
-    "Limoso",
-    "Franco",
-    "Franco-argilloso",
-    "Franco-sabbioso",
-    "Calcareo"
+SOIL_TYPES = [
+    "Clay", "Sandy", "Silty", "Loamy",
+    "Clay Loam", "Sandy Loam", "Calcareous"
 ]
 
+DB_FILE = "agriculture_dashboard.db"
 
-if "campi" not in st.session_state:
-    st.session_state.campi = [
-        {
-            "nome": "Campo Nord",
-            "lat": 41.9028,
-            "lon": 12.4964,
-            "coltura": "Pomodoro",
-            "portata": 15.0,
-            "data_semina": datetime.now().strftime("%Y-%m-%d"),
-            "tipo_terreno": "Franco"
-        }
+
+def db():
+    return sqlite3.connect(DB_FILE)
+
+
+def init_db():
+    conn = db()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fields (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            crop TEXT NOT NULL,
+            soil_type TEXT NOT NULL,
+            flow_rate REAL NOT NULL,
+            planting_date TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS activities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            field_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            activity TEXT NOT NULL,
+            irrigation_status TEXT,
+            smart_water_mm REAL,
+            water_saved_mm REAL,
+            temperature_c REAL,
+            air_humidity_pct REAL,
+            soil_moisture REAL,
+            current_rain_mm REAL,
+            wind_speed_kmh REAL,
+            solar_radiation_wm2 REAL,
+            forecast_rain_3d_mm REAL,
+            forecast_rain_probability_pct REAL,
+            soil_type TEXT,
+            manual_override TEXT,
+            forced_water_mm REAL,
+            override_reason TEXT,
+            FOREIGN KEY(field_id) REFERENCES fields(id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS harvests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            field_name TEXT NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            crop TEXT NOT NULL,
+            soil_type TEXT NOT NULL,
+            flow_rate REAL NOT NULL,
+            planting_date TEXT NOT NULL,
+            harvest_date TEXT NOT NULL,
+            quantity_quintals REAL NOT NULL,
+            quality_notes TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def load_fields():
+    conn = db()
+    rows = conn.execute("""
+        SELECT id, name, latitude, longitude, crop,
+               soil_type, flow_rate, planting_date
+        FROM fields ORDER BY id
+    """).fetchall()
+    conn.close()
+
+    fields = []
+    for row in rows:
+        fields.append({
+            "id": row[0],
+            "name": row[1],
+            "lat": row[2],
+            "lon": row[3],
+            "crop": row[4],
+            "soil_type": row[5],
+            "flow_rate": row[6],
+            "planting_date": row[7]
+        })
+
+    return fields
+
+
+def load_harvests():
+    conn = db()
+    rows = conn.execute("""
+        SELECT field_name, latitude, longitude, crop,
+               soil_type, flow_rate, planting_date,
+               harvest_date, quantity_quintals, quality_notes
+        FROM harvests ORDER BY id DESC
+    """).fetchall()
+    conn.close()
+    return rows
+
+
+def save_field(field):
+    conn = db()
+
+    try:
+        conn.execute("""
+            INSERT INTO fields
+            (name, latitude, longitude, crop, soil_type,
+             flow_rate, planting_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            field["name"], field["lat"], field["lon"],
+            field["crop"], field["soil_type"],
+            field["flow_rate"], field["planting_date"]
+        ))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        st.error("A field with this name already exists.")
+    finally:
+        conn.close()
+
+
+def save_activity(field_id, activity):
+    conn = db()
+
+    conn.execute("""
+        INSERT INTO activities (
+            field_id, timestamp, activity, irrigation_status,
+            smart_water_mm, water_saved_mm, temperature_c,
+            air_humidity_pct, soil_moisture, current_rain_mm,
+            wind_speed_kmh, solar_radiation_wm2,
+            forecast_rain_3d_mm, forecast_rain_probability_pct,
+            soil_type, manual_override, forced_water_mm,
+            override_reason
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        field_id,
+        activity["timestamp"],
+        activity["activity"],
+        activity.get("irrigation_status"),
+        activity.get("smart_water_mm"),
+        activity.get("water_saved_mm"),
+        activity.get("temperature_c"),
+        activity.get("air_humidity_pct"),
+        activity.get("soil_moisture"),
+        activity.get("current_rain_mm"),
+        activity.get("wind_speed_kmh"),
+        activity.get("solar_radiation"),
+        activity.get("forecast_rain_3d_mm"),
+        activity.get("forecast_rain_probability_pct"),
+        activity.get("soil_type"),
+        activity.get("manual_override"),
+        activity.get("forced_water_mm"),
+        activity.get("override_reason")
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def load_activities(field_id):
+    conn = db()
+
+    rows = conn.execute("""
+        SELECT timestamp, activity, irrigation_status,
+               smart_water_mm, water_saved_mm, temperature_c,
+               air_humidity_pct, soil_moisture, current_rain_mm,
+               wind_speed_kmh, solar_radiation_wm2,
+               forecast_rain_3d_mm,
+               forecast_rain_probability_pct, soil_type,
+               manual_override, forced_water_mm, override_reason
+        FROM activities
+        WHERE field_id = ?
+        ORDER BY timestamp DESC
+    """, (field_id,)).fetchall()
+
+    conn.close()
+
+    columns = [
+        "Date/Time", "Activity", "Irrigation Status",
+        "Smart Water (mm)", "Water Saved (mm)",
+        "Temperature (°C)", "Air Humidity (%)",
+        "Soil Moisture (m³/m³)", "Current Rain (mm)",
+        "Wind Speed (km/h)", "Solar Radiation (W/m²)",
+        "3-Day Rain Forecast (mm)", "Rain Probability (%)",
+        "Soil Type", "Manual Override",
+        "Forced Water (mm)", "Override Reason"
     ]
 
-
-if "archivio" not in st.session_state:
-    st.session_state.archivio = []
+    return pd.DataFrame(rows, columns=columns)
 
 
-if "forzature" not in st.session_state:
-    st.session_state.forzature = {}
+def save_harvest(field, quantity, notes):
+    conn = db()
+
+    conn.execute("""
+        INSERT INTO harvests (
+            field_name, latitude, longitude, crop, soil_type,
+            flow_rate, planting_date, harvest_date,
+            quantity_quintals, quality_notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        field["name"], field["lat"], field["lon"],
+        field["crop"], field["soil_type"],
+        field["flow_rate"], field["planting_date"],
+        datetime.now().strftime("%d/%m/%Y"),
+        quantity, notes
+    ))
+
+    conn.commit()
+    conn.close()
 
 
-st.sidebar.header("⚙️ Pannello di Controllo Aziendale")
+def delete_field(field_id):
+    conn = db()
+    conn.execute("DELETE FROM activities WHERE field_id = ?", (field_id,))
+    conn.execute("DELETE FROM fields WHERE id = ?", (field_id,))
+    conn.commit()
+    conn.close()
 
 
-with st.sidebar.form(
-    "field_creation",
-    clear_on_submit=True
-):
+def clear_database():
+    conn = db()
+    conn.execute("DELETE FROM activities")
+    conn.execute("DELETE FROM harvests")
+    conn.execute("DELETE FROM fields")
+    conn.commit()
+    conn.close()
 
-    st.write("### ➕ Aggiungi Nuovo Appezzamento")
 
-    nuovo_nome = st.text_input(
-        "Nome Identificativo",
-        placeholder="es. Uliveto Valle"
+def get_weather(field):
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={field['lat']}&longitude={field['lon']}"
+        "&current=temperature_2m,relative_humidity_2m,rain,"
+        "wind_speed_10m,shortwave_radiation"
+        "&hourly=soil_moisture_3_to_9cm"
+        "&daily=temperature_2m_max,temperature_2m_min,rain_sum,"
+        "precipitation_probability_max,wind_speed_10m_max"
+        "&forecast_days=3&timezone=auto"
     )
 
-    nuova_lat = st.number_input(
-        "Latitudine",
-        value=41.8902,
-        format="%.4f"
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def current_weather(data):
+    current = data.get("current", {})
+    soil_values = data.get("hourly", {}).get(
+        "soil_moisture_3_to_9cm", []
     )
 
-    nuova_lon = st.number_input(
-        "Longitudine",
-        value=12.4922,
-        format="%.4f"
+    valid_values = []
+    for value in soil_values:
+        if value is not None:
+            valid_values.append(value)
+
+    return {
+        "temperature": current.get("temperature_2m", 20.0),
+        "air_humidity": current.get("relative_humidity_2m", 50.0),
+        "rain": current.get("rain", 0.0),
+        "wind": current.get("wind_speed_10m", 0.0),
+        "solar": current.get("shortwave_radiation", 0.0),
+        "soil_moisture": valid_values[-1] if valid_values else 0.22
+    }
+
+
+def forecast_weather(data):
+    daily = data.get("daily", {})
+
+    rain = daily.get("rain_sum", [])[:3]
+    probability = daily.get(
+        "precipitation_probability_max", []
+    )[:3]
+
+    return {
+        "dates": daily.get("time", [])[:3],
+        "temp_min": daily.get("temperature_2m_min", [])[:3],
+        "temp_max": daily.get("temperature_2m_max", [])[:3],
+        "rain": rain,
+        "probability": probability,
+        "wind_max": daily.get("wind_speed_10m_max", [])[:3],
+        "rain_3d": sum(rain),
+        "max_probability": max(probability) if probability else 0
+    }
+
+
+init_db()
+
+if "fields" not in st.session_state:
+    st.session_state.fields = load_fields()
+
+
+st.sidebar.header("⚙️ Farm Control Panel")
+
+with st.sidebar.form("field_creation_form", clear_on_submit=True):
+
+    st.write("### ➕ Add New Field")
+
+    field_name = st.text_input(
+        "Field Name",
+        placeholder="e.g. North Olive Grove"
     )
 
-    nuova_coltura = st.selectbox(
-        "Tipo di Piantagione",
-        list(DIZIONARIO_LOCALE.keys())
+    latitude = st.number_input(
+        "Latitude", value=41.8902, format="%.4f"
     )
 
-    nuovo_terreno = st.selectbox(
-        "Tipologia del Terreno",
-        TIPI_TERRENO
+    longitude = st.number_input(
+        "Longitude", value=12.4922, format="%.4f"
     )
 
-    nuova_portata = st.number_input(
-        "Portata Impianto (litri/ora per mq)",
-        value=15.0,
+    crop = st.selectbox("Crop", list(CROP_DATA.keys()))
+
+    soil_type = st.selectbox("Soil Type", SOIL_TYPES)
+
+    flow_rate = st.number_input(
+        "Irrigation Flow Rate (l/h/m²)",
         min_value=0.1,
+        value=15.0,
         step=0.5
     )
 
-    nuova_data_semina = st.date_input(
-        "Data di Semina/Inizio Ciclo",
+    planting_date = st.date_input(
+        "Planting / Cycle Start Date",
         datetime.now()
     )
 
-    submit_nuovo = st.form_submit_button(
-        "Salva Campo"
-    )
+    save_button = st.form_submit_button("Save Field")
 
-    if submit_nuovo and nuovo_nome:
+    if save_button:
 
-        nuovo_campo = {
-            "nome": nuovo_nome,
-            "lat": nuova_lat,
-            "lon": nuova_lon,
-            "coltura": nuova_coltura,
-            "tipo_terreno": nuovo_terreno,
-            "portata": nuova_portata,
-            "data_semina": nuova_data_semina.strftime(
-                "%Y-%m-%d"
-            )
-        }
+        if not field_name.strip():
+            st.error("Field name is required.")
+        else:
+            field = {
+                "name": field_name.strip(),
+                "lat": latitude,
+                "lon": longitude,
+                "crop": crop,
+                "soil_type": soil_type,
+                "flow_rate": flow_rate,
+                "planting_date": planting_date.strftime("%Y-%m-%d")
+            }
 
-        st.session_state.campi.append(
-            nuovo_campo
-        )
-
-        st.rerun()
+            save_field(field)
+            st.session_state.fields = load_fields()
+            st.rerun()
 
 
-if st.sidebar.button(
-    "🗑️ Svuota Tutta la Dashboard"
-):
-
-    st.session_state.campi = []
-    st.session_state.archivio = []
-    st.session_state.forzature = {}
-
+if st.sidebar.button("🗑️ Clear Entire Dashboard"):
+    clear_database()
+    st.session_state.fields = []
     st.rerun()
 
 
-scheda_monitoraggio, scheda_mappa, scheda_raccolto, scheda_archivio = st.tabs([
-    "📊 Monitoraggio & Irrigazione",
-    "🗺️ Mappa Satellitare",
-    "🌾 Gestione Raccolto",
-    "🗄️ Archivio Storico"
+monitor_tab, map_tab, harvest_tab, archive_tab = st.tabs([
+    "📊 Monitoring & Irrigation",
+    "🗺️ Field Map",
+    "🌾 Harvest Management",
+    "🗄️ Historical Archive"
 ])
 
 
-# =========================================================
-# TAB 1 - MONITORAGGIO E IRRIGAZIONE
-# =========================================================
+with monitor_tab:
 
-with scheda_monitoraggio:
-
-    if not st.session_state.campi:
-
-        st.info(
-            "Nessun campo attivo inserito. "
-            "Usa il modulo a sinistra per mappare un terreno."
-        )
-
+    if not st.session_state.fields:
+        st.info("No active fields. Add a field from the left panel.")
     else:
 
         st.write(
-            f"## Registro delle Irrigazioni Intelligenti "
-            f"({len(st.session_state.campi)} Attivi)"
+            f"## Smart Irrigation Register "
+            f"({len(st.session_state.fields)} active)"
         )
 
-        for campo in st.session_state.campi:
+        for field in st.session_state.fields:
 
-            coltura_info = DIZIONARIO_LOCALE[
-                campo["coltura"]
-            ]
+            crop_data = CROP_DATA[field["crop"]]
 
             with st.expander(
-                f"📋 Registro Campo: "
-                f"{campo['nome']} "
-                f"({campo['coltura']})",
+                f"📋 Field: {field['name']} ({field['crop']})",
                 expanded=True
             ):
 
-                url_chiamata = (
-                    "https://api.open-meteo.com/v1/forecast"
-                    f"?latitude={campo['lat']}"
-                    f"&longitude={campo['lon']}"
-                    "&current="
-                    "temperature_2m,"
-                    "relative_humidity_2m,"
-                    "rain,"
-                    "wind_speed_10m,"
-                    "shortwave_radiation"
-                    "&hourly="
-                    "soil_moisture_3_to_9cm"
-                    "&daily="
-                    "temperature_2m_max,"
-                    "temperature_2m_min,"
-                    "rain_sum,"
-                    "precipitation_probability_max,"
-                    "wind_speed_10m_max"
-                    "&forecast_days=3"
-                    "&timezone=auto"
+                st.write(
+                    f"**Soil type:** {field['soil_type']}"
                 )
 
                 try:
-
-                    risposta = requests.get(
-                        url_chiamata,
-                        timeout=10
-                    )
-
-                    risposta.raise_for_status()
-
-                    dati = risposta.json()
-
-                    current = dati.get(
-                        "current",
-                        {}
-                    )
-
-                    daily = dati.get(
-                        "daily",
-                        {}
-                    )
-
-
-                    # -------------------------------------------------
-                    # DATI ATTUALI
-                    # -------------------------------------------------
-
-                    temp = current.get(
-                        "temperature_2m",
-                        20.0
-                    )
-
-                    pioggia_odierna = current.get(
-                        "rain",
-                        0.0
-                    )
-
-                    umidita_aria = current.get(
-                        "relative_humidity_2m",
-                        50.0
-                    )
-
-                    velocita_vento = current.get(
-                        "wind_speed_10m",
-                        0.0
-                    )
-
-                    radiazione_solare = current.get(
-                        "shortwave_radiation",
-                        0.0
-                    )
-
-
-                    # -------------------------------------------------
-                    # UMIDITA' DEL TERRENO
-                    # -------------------------------------------------
-
-                    lista_suolo = dati.get(
-                        "hourly",
-                        {}
-                    ).get(
-                        "soil_moisture_3_to_9cm",
-                        []
-                    )
-
-                    lista_valida = []
-
-                    for valore in lista_suolo:
-
-                        if valore is not None:
-                            lista_valida.append(valore)
-
-                    if lista_valida:
-                        soil_mst_attuale = lista_valida[-1]
-                    else:
-                        soil_mst_attuale = 0.22
-
-
-                    # -------------------------------------------------
-                    # DATI PREVISIONE
-                    # -------------------------------------------------
-
-                    date_previsioni = daily.get(
-                        "time",
-                        []
-                    )
-
-                    temp_max_previste = daily.get(
-                        "temperature_2m_max",
-                        []
-                    )
-
-                    temp_min_previste = daily.get(
-                        "temperature_2m_min",
-                        []
-                    )
-
-                    piogge_previste = daily.get(
-                        "rain_sum",
-                        []
-                    )
-
-                    probabilita_pioggia = daily.get(
-                        "precipitation_probability_max",
-                        []
-                    )
-
-                    vento_massimo = daily.get(
-                        "wind_speed_10m_max",
-                        []
-                    )
-
-
-                    if len(piogge_previste) > 1:
-                        pioggia_domani = (
-                            piogge_previste[1]
-                        )
-                    else:
-                        pioggia_domani = 0.0
-
-
-                    # -------------------------------------------------
-                    # METRICHE ATTUALI
-                    # -------------------------------------------------
+                    weather_data = get_weather(field)
+                    current = current_weather(weather_data)
+                    forecast = forecast_weather(weather_data)
 
                     c1, c2, c3, c4 = st.columns(4)
 
                     c1.metric(
-                        "Temperatura Aria",
-                        f"{temp:.1f} °C"
+                        "Air Temperature",
+                        f"{current['temperature']:.1f} °C"
                     )
-
                     c2.metric(
-                        "Umidità Aria",
-                        f"{int(umidita_aria)} %"
+                        "Air Humidity",
+                        f"{current['air_humidity']:.0f} %"
                     )
-
                     c3.metric(
-                        "Pioggia Oggi",
-                        f"{pioggia_odierna:.1f} mm"
+                        "Current Rain",
+                        f"{current['rain']:.1f} mm"
                     )
-
                     c4.metric(
-                        "Umidità Suolo",
-                        f"{soil_mst_attuale:.3f} m³/m³"
+                        "Soil Moisture",
+                        f"{current['soil_moisture']:.3f}"
                     )
-
-
-                    # -------------------------------------------------
-                    # PARAMETRI AMBIENTALI
-                    # -------------------------------------------------
 
                     c5, c6, c7 = st.columns(3)
 
                     c5.metric(
-                        "Velocità del Vento",
-                        f"{velocita_vento:.1f} km/h"
+                        "Wind Speed",
+                        f"{current['wind']:.1f} km/h"
                     )
-
                     c6.metric(
-                        "Radiazione Solare",
-                        f"{radiazione_solare:.1f} W/m²"
+                        "Solar Radiation",
+                        f"{current['solar']:.1f} W/m²"
                     )
-
                     c7.metric(
-                        "Tipologia del Terreno",
-                        campo["tipo_terreno"]
+                        "Soil Type",
+                        field["soil_type"]
                     )
 
+                    water_need = crop_data["water_need"]
+                    soil_threshold = crop_data["soil_threshold"]
 
-                    # -------------------------------------------------
-                    # LOGICA IRRIGAZIONE AUTOMATICA
-                    # -------------------------------------------------
-
-                    fabbisogno = (
-                        coltura_info["fabbisogno"]
+                    tomorrow_rain = (
+                        forecast["rain"][1]
+                        if len(forecast["rain"]) > 1
+                        else 0.0
                     )
-
-                    soglia_critica = (
-                        coltura_info["soglia_umidita"]
-                    )
-
-                    giorno_irrigazione = (
-                        datetime.now().strftime(
-                            "%d/%m/%Y"
-                        )
-                    )
-
 
                     if (
-                        pioggia_odierna >= fabbisogno
-                        or pioggia_domani >= fabbisogno
+                        current["rain"] >= water_need
+                        or tomorrow_rain >= water_need
                     ):
-
-                        stato_irr = (
-                            "Sospesa "
-                            "(Meteo favorevole)"
+                        irrigation_status = (
+                            "Suspended - favorable weather"
                         )
+                        end_time = "06:00"
+                        smart_water = 0.0
+                        water_saved = water_need
 
-                        ora_fine = "06:00"
-                        acqua_smart = 0.0
-                        risparmio = fabbisogno
+                    elif current["soil_moisture"] < soil_threshold:
 
-                    elif (
-                        soil_mst_attuale
-                        < soglia_critica
-                    ):
+                        irrigation_status = "Active - dry soil"
 
-                        stato_irr = (
-                            "Attiva "
-                            "(Terreno secco)"
-                        )
-
-                        acqua_da_integrare = max(
+                        water_to_apply = max(
                             0.0,
-                            fabbisogno
-                            - pioggia_odierna
+                            water_need - current["rain"]
                         )
 
-                        tempo_ore = (
-                            acqua_da_integrare
-                            / campo["portata"]
+                        hours = (
+                            water_to_apply / field["flow_rate"]
                         )
 
-                        minuti = int(
-                            tempo_ore * 60
-                        )
+                        minutes = int(hours * 60)
 
-                        ora_fine = (
-                            datetime.strptime(
-                                "06:00",
-                                "%H:%M"
-                            )
-                            + timedelta(
-                                minutes=minuti
-                            )
+                        end_time = (
+                            datetime.strptime("06:00", "%H:%M")
+                            + timedelta(minutes=minutes)
                         ).strftime("%H:%M")
 
-                        acqua_smart = (
-                            acqua_da_integrare
-                        )
-
-                        risparmio = (
-                            fabbisogno
-                            - acqua_smart
-                        )
+                        smart_water = water_to_apply
+                        water_saved = water_need - smart_water
 
                     else:
 
-                        stato_irr = (
-                            "Sospesa "
-                            "(Umidità ottimale)"
+                        irrigation_status = (
+                            "Suspended - optimal soil moisture"
+                        )
+                        end_time = "06:00"
+                        smart_water = 0.0
+                        water_saved = water_need
+
+                    st.write("### 🌦️ Three-Day Weather Forecast")
+
+                    forecast_rows = []
+
+                    for i, date in enumerate(forecast["dates"]):
+
+                        min_temp = (
+                            forecast["temp_min"][i]
+                            if i < len(forecast["temp_min"])
+                            else 0.0
                         )
 
-                        ora_fine = "06:00"
-                        acqua_smart = 0.0
-                        risparmio = fabbisogno
-
-
-                    # -------------------------------------------------
-                    # PREVISIONE METEO
-                    # -------------------------------------------------
-
-                    st.write(
-                        "### 🌦️ Previsioni Meteo "
-                        "Prossimi 3 Giorni"
-                    )
-
-                    dati_previsione = []
-
-                    for idx_previsione, giorno in enumerate(
-                        date_previsioni
-                    ):
-
-                        if idx_previsione >= 3:
-                            break
-
-                        if (
-                            idx_previsione
-                            < len(temp_min_previste)
-                        ):
-                            temp_min = (
-                                temp_min_previste[
-                                    idx_previsione
-                                ]
-                            )
-                        else:
-                            temp_min = 0.0
-
-
-                        if (
-                            idx_previsione
-                            < len(temp_max_previste)
-                        ):
-                            temp_max = (
-                                temp_max_previste[
-                                    idx_previsione
-                                ]
-                            )
-                        else:
-                            temp_max = 0.0
-
-
-                        if (
-                            idx_previsione
-                            < len(piogge_previste)
-                        ):
-                            pioggia = (
-                                piogge_previste[
-                                    idx_previsione
-                                ]
-                            )
-                        else:
-                            pioggia = 0.0
-
-
-                        if (
-                            idx_previsione
-                            < len(probabilita_pioggia)
-                        ):
-                            probabilita = (
-                                probabilita_pioggia[
-                                    idx_previsione
-                                ]
-                            )
-                        else:
-                            probabilita = 0
-
-
-                        if (
-                            idx_previsione
-                            < len(vento_massimo)
-                        ):
-                            vento = (
-                                vento_massimo[
-                                    idx_previsione
-                                ]
-                            )
-                        else:
-                            vento = 0.0
-
-
-                        data_visualizzata = (
-                            datetime.strptime(
-                                giorno,
-                                "%Y-%m-%d"
-                            ).strftime(
-                                "%d/%m/%Y"
-                            )
+                        max_temp = (
+                            forecast["temp_max"][i]
+                            if i < len(forecast["temp_max"])
+                            else 0.0
                         )
 
+                        rain = (
+                            forecast["rain"][i]
+                            if i < len(forecast["rain"])
+                            else 0.0
+                        )
 
-                        dati_previsione.append({
-                            "Giorno": data_visualizzata,
-                            "Temp. Min": (
-                                f"{temp_min:.1f} °C"
-                            ),
-                            "Temp. Max": (
-                                f"{temp_max:.1f} °C"
-                            ),
-                            "Pioggia": (
-                                f"{pioggia:.1f} mm"
-                            ),
-                            "Prob. Pioggia": (
-                                f"{probabilita:.0f} %"
-                            ),
-                            "Vento Max": (
-                                f"{vento:.1f} km/h"
-                            )
+                        probability = (
+                            forecast["probability"][i]
+                            if i < len(forecast["probability"])
+                            else 0
+                        )
+
+                        wind = (
+                            forecast["wind_max"][i]
+                            if i < len(forecast["wind_max"])
+                            else 0.0
+                        )
+
+                        forecast_rows.append({
+                            "Date": datetime.strptime(
+                                date, "%Y-%m-%d"
+                            ).strftime("%d/%m/%Y"),
+                            "Min Temp": f"{min_temp:.1f} °C",
+                            "Max Temp": f"{max_temp:.1f} °C",
+                            "Rain": f"{rain:.1f} mm",
+                            "Rain Probability": f"{probability:.0f} %",
+                            "Max Wind": f"{wind:.1f} km/h"
                         })
 
-
-                    df_previsione = pd.DataFrame(
-                        dati_previsione
-                    )
-
                     st.dataframe(
-                        df_previsione,
+                        pd.DataFrame(forecast_rows),
                         use_container_width=True,
                         hide_index=True
                     )
 
-
-                    # -------------------------------------------------
-                    # ANALISI PREVISIONALE
-                    # -------------------------------------------------
-
-                    pioggia_totale_3_giorni = sum(
-                        piogge_previste[:3]
-                    )
-
-                    probabilita_massima = 0
-
-                    if probabilita_pioggia:
-
-                        probabilita_massima = max(
-                            probabilita_pioggia[:3]
+                    if forecast["rain_3d"] >= water_need:
+                        recommendation = (
+                            "🌧️ Significant rain is expected. "
+                            "Automatic irrigation should normally "
+                            "remain suspended."
                         )
-
-
-                    if (
-                        pioggia_totale_3_giorni
-                        >= fabbisogno
-                    ):
-
-                        consiglio_meteo = (
-                            "🌧️ Irrigazione "
-                            "generalmente sconsigliata: "
-                            "sono previste precipitazioni "
-                            "significative."
-                        )
-
                     elif (
-                        soil_mst_attuale
-                        < soglia_critica
-                        and pioggia_totale_3_giorni
-                        < fabbisogno
+                        current["soil_moisture"] < soil_threshold
+                        and forecast["rain_3d"] < water_need
                     ):
-
-                        consiglio_meteo = (
-                            "⚠️ Terreno sotto la soglia "
-                            "di umidità e poche precipitazioni "
-                            "previste. Valutare irrigazione."
+                        recommendation = (
+                            "⚠️ Soil moisture is below the crop "
+                            "threshold and limited rain is expected. "
+                            "Irrigation should be considered."
                         )
-
                     else:
-
-                        consiglio_meteo = (
-                            "ℹ️ Condizioni nella norma. "
-                            "Monitorare il terreno "
-                            "e le precipitazioni."
+                        recommendation = (
+                            "ℹ️ Conditions are currently within "
+                            "the expected range."
                         )
 
+                    st.info(recommendation)
 
-                    st.info(
-                        consiglio_meteo
-                    )
-
-
-                    # -------------------------------------------------
-                    # FORZATURA MANUALE
-                    # -------------------------------------------------
-
-                    st.write(
-                        "### 💧 "
-                        "Controllo Irrigazione Manuale"
-                    )
+                    st.write("### 💧 Manual Irrigation Override")
 
                     with st.form(
-                        f"manual_irrigation_{campo['nome']}"
+                        f"manual_irrigation_{field['id']}"
                     ):
 
-                        motivo_forzatura = st.text_input(
-                            "Motivazione della forzatura",
-                            value=(
-                                "Decisione manuale "
-                                "dell'operatore"
-                            ),
-                            key=(
-                                f"reason_"
-                                f"{campo['nome']}"
-                            )
-                        )
-
-                        quantita_forzata = st.number_input(
-                            "Quantità acqua da erogare (mm)",
+                        forced_water = st.number_input(
+                            "Water quantity (mm)",
                             min_value=0.1,
-                            value=float(fabbisogno),
-                            step=0.5,
-                            key=(
-                                f"water_"
-                                f"{campo['nome']}"
-                            )
+                            value=float(water_need),
+                            step=0.5
                         )
 
-                        conferma_forzatura = (
-                            st.form_submit_button(
-                                "💧 Forza Irrigazione"
-                            )
+                        override_reason = st.text_input(
+                            "Reason for manual override",
+                            value="Manual operator decision"
                         )
 
+                        force_button = st.form_submit_button(
+                            "💧 Force Irrigation"
+                        )
 
-                        if conferma_forzatura:
+                        if force_button:
 
-                            ora_forzatura = (
-                                datetime.now().strftime(
-                                    "%d/%m/%Y %H:%M:%S"
-                                )
-                            )
-
-                            st.session_state.forzature[
-                                campo["nome"]
-                            ] = {
-                                "data_ora": ora_forzatura,
-                                "motivo": (
-                                    motivo_forzatura
+                            activity = {
+                                "timestamp": datetime.now().strftime(
+                                    "%Y-%m-%d %H:%M:%S"
                                 ),
-                                "stato": (
-                                    "Forzata manualmente"
-                                ),
-                                "acqua": (
-                                    quantita_forzata
-                                ),
-                                "pioggia_prevista": (
-                                    pioggia_totale_3_giorni
-                                ),
-                                "probabilita_pioggia": (
-                                    probabilita_massima
-                                ),
-                                "umidita_suolo": (
-                                    soil_mst_attuale
-                                )
+                                "activity": "Manual irrigation override",
+                                "irrigation_status": "Forced manually",
+                                "smart_water_mm": None,
+                                "water_saved_mm": None,
+                                "temperature_c": current["temperature"],
+                                "air_humidity_pct": current["air_humidity"],
+                                "soil_moisture": current["soil_moisture"],
+                                "current_rain_mm": current["rain"],
+                                "wind_speed_kmh": current["wind"],
+                                "solar_radiation": current["solar"],
+                                "forecast_rain_3d_mm": forecast["rain_3d"],
+                                "forecast_rain_probability_pct": forecast[
+                                    "max_probability"
+                                ],
+                                "soil_type": field["soil_type"],
+                                "manual_override": "Yes",
+                                "forced_water_mm": forced_water,
+                                "override_reason": override_reason
                             }
 
-                            st.success(
-                                f"Irrigazione forzata "
-                                f"manualmente per "
-                                f"{campo['nome']}."
+                            save_activity(
+                                field["id"],
+                                activity
                             )
 
+                            st.success(
+                                "Manual irrigation override recorded."
+                            )
                             st.rerun()
 
+                    if st.button(
+                        "📝 Record Current Automatic Check",
+                        key=f"record_{field['id']}"
+                    ):
 
-                    # -------------------------------------------------
-                    # DATI FORZATURA
-                    # -------------------------------------------------
+                        activity = {
+                            "timestamp": datetime.now().strftime(
+                                "%Y-%m-%d %H:%M:%S"
+                            ),
+                            "activity": (
+                                "Automatic weather and "
+                                "irrigation check"
+                            ),
+                            "irrigation_status": irrigation_status,
+                            "smart_water_mm": smart_water,
+                            "water_saved_mm": water_saved,
+                            "temperature_c": current["temperature"],
+                            "air_humidity_pct": current["air_humidity"],
+                            "soil_moisture": current["soil_moisture"],
+                            "current_rain_mm": current["rain"],
+                            "wind_speed_kmh": current["wind"],
+                            "solar_radiation": current["solar"],
+                            "forecast_rain_3d_mm": forecast["rain_3d"],
+                            "forecast_rain_probability_pct": forecast[
+                                "max_probability"
+                            ],
+                            "soil_type": field["soil_type"],
+                            "manual_override": "No",
+                            "forced_water_mm": None,
+                            "override_reason": ""
+                        }
 
-                    forzatura = (
-                        st.session_state.forzature.get(
-                            campo["nome"]
+                        save_activity(
+                            field["id"],
+                            activity
                         )
-                    )
 
-
-                    # -------------------------------------------------
-                    # GRIGLIA COMPLETA
-                    # -------------------------------------------------
-
-                    parametri = [
-                        "Stato Impianto",
-                        "Giorno",
-                        "Ora Inizio",
-                        "Ora Fine",
-                        "Acqua Erogata Smart",
-                        "Acqua Risparmiata",
-                        "Velocità del Vento",
-                        "Radiazione Solare",
-                        "Tipologia del Terreno",
-                        "Pioggia Prevista 3 Giorni",
-                        "Probabilità Pioggia",
-                        "Forzatura Manuale",
-                        "Data/Ora Forzatura",
-                        "Motivazione Forzatura",
-                        "Acqua Forzata",
-                        "Umidità Suolo al Momento della Forzatura"
-                    ]
-
-
-                    valori = [
-                        stato_irr,
-                        giorno_irrigazione,
-                        "06:00",
-                        ora_fine,
-                        f"{acqua_smart:.1f} mm",
-                        f"{risparmio:.1f} mm",
-                        f"{velocita_vento:.1f} km/h",
-                        f"{radiazione_solare:.1f} W/m²",
-                        campo["tipo_terreno"],
-                        f"{pioggia_totale_3_giorni:.1f} mm",
-                        f"{probabilita_massima:.0f} %",
-                    ]
-
-
-                    if forzatura:
-
-                        valori.extend([
-                            "SI",
-                            forzatura["data_ora"],
-                            forzatura["motivo"],
-                            f"{forzatura['acqua']:.1f} mm",
-                            (
-                                f"{forzatura['umidita_suolo']:.3f} "
-                                "m³/m³"
-                            )
-                        ])
-
-                    else:
-
-                        valori.extend([
-                            "NO",
-                            "-",
-                            "-",
-                            "-",
-                            "-"
-                        ])
-
-
-                    df_reg = pd.DataFrame({
-                        "Parametro": parametri,
-                        "Valore": valori
-                    })
-
+                        st.success("Automatic check recorded.")
+                        st.rerun()
 
                     st.write(
-                        "### 📋 Registro del Campo"
+                        "### 📋 Chronological Field Activity Register"
                     )
 
-                    st.table(
-                        df_reg
-                    )
+                    activity_df = load_activities(field["id"])
 
+                    if activity_df.empty:
+                        st.info(
+                            "No activities recorded for this field yet."
+                        )
+                    else:
+                        st.dataframe(
+                            activity_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
-                except requests.RequestException as errore:
-
+                except requests.RequestException as error:
                     st.error(
-                        "Errore di comunicazione "
-                        "con il servizio meteo: "
-                        f"{errore}"
+                        f"Weather service communication error: {error}"
                     )
-
-                except ValueError as errore:
-
-                    st.error(
-                        "Errore nella lettura "
-                        "dei dati meteorologici: "
-                        f"{errore}"
-                    )
+                except ValueError as error:
+                    st.error(f"Invalid weather data: {error}")
 
 
-# =========================================================
-# TAB 2 - MAPPA
-# =========================================================
+with map_tab:
 
-with scheda_mappa:
+    if st.session_state.fields:
 
-    if st.session_state.campi:
+        st.write("## 🗺️ Agricultural Field Map")
 
-        st.write(
-            "## 🗺️ Mappa Satellitare "
-            "dei Campi Aziendali"
-        )
+        map_data = []
 
-        dati_mappa = []
-
-        for campo in st.session_state.campi:
-
-            dati_mappa.append({
-                "latitude": campo["lat"],
-                "longitude": campo["lon"]
+        for field in st.session_state.fields:
+            map_data.append({
+                "latitude": field["lat"],
+                "longitude": field["lon"]
             })
 
-        data_mappa = pd.DataFrame(
-            dati_mappa
-        )
-
         st.map(
-            data_mappa,
+            pd.DataFrame(map_data),
             zoom=11,
             use_container_width=True
         )
 
     else:
+        st.info("No active fields available.")
+
+
+with harvest_tab:
+
+    if not st.session_state.fields:
 
         st.info(
-            "Nessun campo attivo "
-            "da mostrare sulla mappa."
-        )
-
-
-# =========================================================
-# TAB 3 - GESTIONE RACCOLTO
-# =========================================================
-
-with scheda_raccolto:
-
-    if not st.session_state.campi:
-
-        st.info(
-            "Nessun campo attivo "
-            "da gestire per il raccolto."
+            "No active fields available for harvest management."
         )
 
     else:
 
-        st.write(
-            "## 🌾 Analisi Maturazione "
-            "& Chiusura Campo"
-        )
+        st.write("## 🌾 Crop Maturity & Harvest Management")
 
-        for idx, campo in enumerate(
-            st.session_state.campi
-        ):
+        for field in st.session_state.fields:
 
-            coltura_info = DIZIONARIO_LOCALE[
-                campo["coltura"]
-            ]
+            crop_data = CROP_DATA[field["crop"]]
 
-            dt_semina = datetime.strptime(
-                campo["data_semina"],
+            planting_date = datetime.strptime(
+                field["planting_date"],
                 "%Y-%m-%d"
             )
 
-            giorni_trascorsi = (
-                datetime.now()
-                - dt_semina
+            days_elapsed = (
+                datetime.now() - planting_date
             ).days
 
-            giorni_teorici_rimanenti = (
-                coltura_info[
-                    "giorni_maturazione"
-                ]
-                - giorni_trascorsi
-            )
-
-
-            url_stima = (
-                "https://api.open-meteo.com/v1/forecast"
-                f"?latitude={campo['lat']}"
-                f"&longitude={campo['lon']}"
-                "&current=temperature_2m"
-                "&timezone=auto"
-            )
-
-
-            aggiustamento_clima = 0
-
-            try:
-
-                res_stima = requests.get(
-                    url_stima,
-                    timeout=5
-                )
-
-                res_stima.raise_for_status()
-
-                dati_stima = res_stima.json()
-
-                temp_attuale = (
-                    dati_stima
-                    .get("current", {})
-                    .get(
-                        "temperature_2m",
-                        20.0
-                    )
-                )
-
-                if temp_attuale > 28.0:
-
-                    aggiustamento_clima = -5
-
-                elif temp_attuale < 12.0:
-
-                    aggiustamento_clima = 7
-
-            except requests.RequestException:
-
-                temp_attuale = 20.0
-
-            except ValueError:
-
-                temp_attuale = 20.0
-
-
-            giorni_finali_stima = max(
+            days_remaining = max(
                 0,
-                giorni_teorici_rimanenti
-                + aggiustamento_clima
+                crop_data["maturity_days"] - days_elapsed
             )
 
-
-            data_raccolto_stimata = (
+            estimated_harvest = (
                 datetime.now()
-                + timedelta(
-                    days=giorni_finali_stima
-                )
-            ).strftime(
-                "%d/%m/%Y"
-            )
-
+                + timedelta(days=days_remaining)
+            ).strftime("%d/%m/%Y")
 
             st.write(
-                f"### 📍 Appezzamento: "
-                f"{campo['nome']} "
-                f"(Coltura attuale: "
-                f"{campo['coltura']})"
+                f"### 📍 {field['name']} ({field['crop']})"
             )
 
+            c1, c2, c3, c4 = st.columns(4)
 
-            cr1, cr2, cr3, cr4 = st.columns(4)
-
-
-            cr1.write(
-                f"📅 **Data Semina:** "
-                f"{dt_semina.strftime('%d/%m/%Y')}"
+            c1.write(
+                f"📅 **Planting:** "
+                f"{planting_date.strftime('%d/%m/%Y')}"
             )
 
-            cr2.write(
-                f"⏱️ **Giorni alla Raccolta:** "
-                f"~ {giorni_finali_stima} "
-                f"giorni rimanenti"
+            c2.write(
+                f"⏱️ **Days to harvest:** "
+                f"~ {days_remaining}"
             )
 
-            cr3.write(
-                f"🔮 **Finestra Raccolta Stimata:** "
-                f"{data_raccolto_stimata}"
+            c3.write(
+                f"🔮 **Estimated harvest:** "
+                f"{estimated_harvest}"
             )
 
-            cr4.write(
-                f"🌱 **Terreno:** "
-                f"{campo['tipo_terreno']}"
+            c4.write(
+                f"🌱 **Soil:** {field['soil_type']}"
             )
 
+            with st.form(f"harvest_{field['id']}"):
 
-            with st.form(
-                f"crop_close_{idx}"
-            ):
+                st.write("⚠️ **Close Crop Cycle**")
 
-                st.write(
-                    "⚠️ **Modulo di Chiusura "
-                    "Ciclo Coltura (Raccolto)**"
-                )
-
-                quantita_raccolta = st.number_input(
-                    "Quintali (q.li) Raccolti "
-                    "(Valore Obbligatorio)",
+                quantity = st.number_input(
+                    "Harvest quantity (quintals)",
                     min_value=0.1,
                     step=0.1,
-                    format="%.1f"
+                    format="%.1f",
+                    key=f"quantity_{field['id']}"
                 )
 
-                note_raccolto = st.text_input(
-                    "Note Qualità Prodotto",
-                    placeholder=(
-                        "es. Ottima pezzatura, "
-                        "raccolto asciutto"
-                    )
+                notes = st.text_input(
+                    "Product quality notes",
+                    placeholder="e.g. Excellent quality, dry harvest",
+                    key=f"notes_{field['id']}"
                 )
 
-                chiudi_pulsante = (
-                    st.form_submit_button(
-                        "🎉 Registra Raccolto "
-                        "e Libera Terreno"
-                    )
+                close_button = st.form_submit_button(
+                    "🎉 Register Harvest"
                 )
 
+                if close_button:
 
-                if chiudi_pulsante:
-
-                    campo["data_raccolto"] = (
-                        datetime.now().strftime(
-                            "%d/%m/%Y"
-                        )
+                    save_harvest(
+                        field,
+                        quantity,
+                        notes or "No notes"
                     )
 
-                    campo["quintali"] = (
-                        quantita_raccolta
-                    )
+                    delete_field(field["id"])
 
-                    campo["note_qualita"] = (
-                        note_raccolto
-                        if note_raccolto
-                        else "Nessuna nota"
-                    )
-
-
-                    # Conserva una copia completa
-                    # del campo nello storico.
-
-                    st.session_state.archivio.append(
-                        campo.copy()
-                    )
-
-
-                    st.session_state.campi.pop(
-                        idx
-                    )
-
+                    st.session_state.fields = load_fields()
 
                     st.success(
-                        f"Successo! "
-                        f"{campo['nome']} chiuso. "
-                        f"Dati salvati "
-                        f"in archivio storico."
+                        f"Field {field['name']} closed and archived."
                     )
-
                     st.rerun()
-
 
             st.write("---")
 
 
-# =========================================================
-# TAB 4 - ARCHIVIO STORICO
-# =========================================================
+with archive_tab:
 
-with scheda_archivio:
+    st.write("## 🗄️ Historical Harvest Archive")
 
-    st.write(
-        "## 🗄️ Registro Storico "
-        "dei Raccolti Conclusi"
-    )
+    harvests = load_harvests()
 
+    if not harvests:
 
-    if not st.session_state.archivio:
-
-        st.caption(
-            "Nessun raccolto completato "
-            "in archivio finora."
-        )
+        st.caption("No completed harvests in the archive.")
 
     else:
 
-        dati_tabella_archivio = []
+        archive_rows = []
 
+        for harvest in harvests:
 
-        for arch in st.session_state.archivio:
-
-            dati_tabella_archivio.append({
-
-                "Nome Campo": arch["nome"],
-
-                "Varietà Piantata": arch["coltura"],
-
-                "Tipologia Terreno": (
-                    arch.get(
-                        "tipo_terreno",
-                        "Non specificato"
-                    )
-                ),
-
-                "Latitudine": arch["lat"],
-
-                "Longitudine": arch["lon"],
-
-                "Portata Impianto": (
-                    f"{arch['portata']:.1f}"
-                    " l/h/m²"
-                ),
-
-                "Data Semina": (
-                    datetime.strptime(
-                        arch["data_semina"],
-                        "%Y-%m-%d"
-                    ).strftime(
-                        "%d/%m/%Y"
-                    )
-                ),
-
-                "Data Raccolta": (
-                    arch["data_raccolto"]
-                ),
-
-                "Produzione Totale (q.li)": (
-                    f"{arch['quintali']:.1f} q.li"
-                ),
-
-                "Note Qualità Agronoma": (
-                    arch["note_qualita"]
-                )
+            archive_rows.append({
+                "Field Name": harvest[0],
+                "Latitude": harvest[1],
+                "Longitude": harvest[2],
+                "Crop": harvest[3],
+                "Soil Type": harvest[4],
+                "Flow Rate": f"{harvest[5]:.1f} l/h/m²",
+                "Planting Date": datetime.strptime(
+                    harvest[6], "%Y-%m-%d"
+                ).strftime("%d/%m/%Y"),
+                "Harvest Date": harvest[7],
+                "Production": f"{harvest[8]:.1f} q.li",
+                "Quality Notes": harvest[9]
             })
 
-
-        df_archivio = pd.DataFrame(
-            dati_tabella_archivio
-        )
-
-
         st.dataframe(
-            df_archivio,
+            pd.DataFrame(archive_rows),
             use_container_width=True,
             hide_index=True
         )
