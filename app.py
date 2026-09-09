@@ -508,6 +508,56 @@ with monitor_tab:
                         smart_water = 0.0
                         water_saved = water_need
 
+                    # Save the automatic decision without requiring a button.
+                    # One automatic check per field and hour avoids duplicate records
+                    # caused by Streamlit reruns.
+                    check_time = datetime.now().replace(
+                        minute=0, second=0, microsecond=0
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+
+                    conn = db()
+                    already_recorded = conn.execute(
+                        """
+                        SELECT 1
+                        FROM activities
+                        WHERE field_id = ?
+                        AND timestamp = ?
+                        AND activity = ?
+                        LIMIT 1
+                        """,
+                        (
+                            field["id"],
+                            check_time,
+                            "Automatic weather and irrigation check"
+                        )
+                    ).fetchone()
+                    conn.close()
+
+                    if not already_recorded:
+                        activity = {
+                            "timestamp": check_time,
+                            "activity": "Automatic weather and irrigation check",
+                            "irrigation_status": irrigation_status,
+                            "smart_water_mm": smart_water,
+                            "water_saved_mm": water_saved,
+                            "temperature_c": current["temperature"],
+                            "air_humidity_pct": current["air_humidity"],
+                            "soil_moisture": current["soil_moisture"],
+                            "current_rain_mm": current["rain"],
+                            "wind_speed_kmh": current["wind"],
+                            "solar_radiation": current["solar"],
+                            "forecast_rain_3d_mm": forecast["rain_3d"],
+                            "forecast_rain_probability_pct": forecast[
+                                "max_probability"
+                            ],
+                            "soil_type": field["soil_type"],
+                            "manual_override": "No",
+                            "forced_water_mm": None,
+                            "override_reason": ""
+                        }
+
+                        save_activity(field["id"], activity)
+
                     st.write("### 🌦️ Three-Day Weather Forecast")
 
                     forecast_rows = []
@@ -641,46 +691,6 @@ with monitor_tab:
                                 "Manual irrigation override recorded."
                             )
                             st.rerun()
-
-                    if st.button(
-                        "📝 Record Current Automatic Check",
-                        key=f"record_{field['id']}"
-                    ):
-
-                        activity = {
-                            "timestamp": datetime.now().strftime(
-                                "%Y-%m-%d %H:%M:%S"
-                            ),
-                            "activity": (
-                                "Automatic weather and "
-                                "irrigation check"
-                            ),
-                            "irrigation_status": irrigation_status,
-                            "smart_water_mm": smart_water,
-                            "water_saved_mm": water_saved,
-                            "temperature_c": current["temperature"],
-                            "air_humidity_pct": current["air_humidity"],
-                            "soil_moisture": current["soil_moisture"],
-                            "current_rain_mm": current["rain"],
-                            "wind_speed_kmh": current["wind"],
-                            "solar_radiation": current["solar"],
-                            "forecast_rain_3d_mm": forecast["rain_3d"],
-                            "forecast_rain_probability_pct": forecast[
-                                "max_probability"
-                            ],
-                            "soil_type": field["soil_type"],
-                            "manual_override": "No",
-                            "forced_water_mm": None,
-                            "override_reason": ""
-                        }
-
-                        save_activity(
-                            field["id"],
-                            activity
-                        )
-
-                        st.success("Automatic check recorded.")
-                        st.rerun()
 
                     st.write(
                         "### 📋 Chronological Field Activity Register"
@@ -868,4 +878,3 @@ with archive_tab:
             pd.DataFrame(archive_rows),
             use_container_width=True,
             hide_index=True
-        )
