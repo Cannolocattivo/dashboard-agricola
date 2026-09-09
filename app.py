@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import pandas as pd
 
 # Configurazione pagina
 st.set_page_config(page_title="Dashboard Agricola", layout="wide")
@@ -11,18 +10,21 @@ st.sidebar.header("📍 Posizione Azienda")
 lat = st.sidebar.number_input("Latitudine", value=41.9028, format="%.4f")
 lon = st.sidebar.number_input("Longitudine", value=12.4964, format="%.4f")
 
-# Endpoint API Open-Meteo
-url = f"https://open-meteo.com{lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,rain,soil_moisture_3_to_9cm&timezone=auto"
+# URL Corretto: i dati del suolo vengono richiesti nel parametro "hourly"
+url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,rain&hourly=soil_moisture_3_to_9cm&timezone=auto"
 
 try:
     response = requests.get(url).json()
-    current = response["current"]
     
-    # Estrazione metriche
+    # 1. Estrazione dati meteo correnti
+    current = response["current"]
     temp = current["temperature_2m"]
     umidita = current["relative_humidity_2m"]
     pioggia = current["rain"]
-    soil_mst = current["soil_moisture_3_to_9cm"]
+    
+    # 2. Estrazione ultimo dato orario disponibile sull'umidità del suolo
+    hourly_soil = response["hourly"]["soil_moisture_3_to_9cm"]
+    soil_mst = hourly_soil[-1] if hourly_soil else 0.0
 
     # Layout a colonne per i dati meteo
     st.header("🌦️ Condizioni Meteo in Tempo Reale")
@@ -50,10 +52,10 @@ try:
     with col5:
         st.subheader("Pianificazione Intervento")
         portata = st.number_input("Portata impianto (litri/ora per mq)", value=15)
-        fabbisogno = st.number_input("Fabbisogno idrico coltura (mm o litri/mq)", value=5)
+        fabbisogno = st.number_input("Fabbisogno idrico coltura (litri/mq)", value=5)
         
         tempo_irrigazione = fabbisogno / portata
-        st.warning(f"⏱️ Tempo di irrigazione stimato: **{tempo_irrigazione:.2f} ore** ({int(tempo_irrigazione*60)} minuti)")
+        st.warning(f"⏱️ Tempo di irrigazione stimato: **{tempo_irrigazione:.2f} ore** ({int(tempo_irrigazione*60)} minutes)")
 
 except Exception as e:
-    st.error("Impossibile recuperare i dati meteo. Controlla la connessione o le coordinate.")
+    st.error(f"Errore nel recupero dati: {e}")
