@@ -1,9 +1,11 @@
 import streamlit as st
 import requests
+import pandas as pd
+from datetime import datetime
 
 # Configurazione della pagina
-st.set_page_config(page_title="Dashboard Agricola Smart", layout="wide")
-st.title("🚜 Dashboard Agricola: Monitoraggio Campi")
+st.set_page_config(page_title="Dashboard Agricola Avanzata", layout="wide")
+st.title("🚜 Dashboard Agricola: Monitoraggio, Storico & Previsioni a 3 Giorni")
 
 # Dizionario agronomico locale di stabilità
 DIZIONARIO_LOCALE = {
@@ -60,60 +62,104 @@ else:
             st.subheader(f"Analisi Campo: {campo['nome']} | Coltura: {campo['coltura']}")
             st.caption(f"Coordinate: {campo['lat']}, {campo['lon']} | Impianto: {campo['portata']} l/h/mq")
             
-            # SOLUZIONE CRITICA: Componiamo l'URL come stringa fissa pre-formattata.
-            # Questo impedisce a Python di modificare le virgole in codici strani che rompono Open-Meteo.
+            # URL ottimizzato per includere le previsioni giornaliere (daily) della pioggia a 3 giorni
             url_blindato = (
-                f"https://api.open-meteo.com/v1/forecast?"
+                f"https://open-meteo.com?"
                 f"latitude={campo['lat']}&longitude={campo['lon']}&"
                 f"current=temperature_2m,relative_humidity_2m,rain&"
-                f"hourly=soil_moisture_3_to_9cm&timezone=auto"
+                f"hourly=soil_moisture_3_to_9cm&"
+                f"daily=rain_sum&forecast_days=3&timezone=auto"
             )
             
             try:
-                # Eseguiamo la chiamata diretta all'URL testuale pulito
                 risposta = requests.get(url_blindato, timeout=10)
                 
                 if risposta.status_code != 200:
                     st.error(f"⚠️ Errore di comunicazione con il server (Codice {risposta.status_code}).")
-                    st.text(f"Dettaglio: {risposta.text}")
                 else:
                     dati = risposta.json()
                     
-                    # Estrazione sicura dei dati con valori di fallback pronti per evitare crash
+                    # 1. DATI METEO ATTUALI
                     current = dati.get("current", {})
                     temp = current.get("temperature_2m", 20.0)
                     umidita_aria = current.get("relative_humidity_2m", 50.0)
-                    pioggia = current.get("rain", 0.0)
+                    pioggia_odierna = current.get("rain", 0.0)
                     
-                    # Estrazione sicura umidità suolo
+                    # 2. DATI ORARI (UMIDITÀ SUOLO)
                     hourly = dati.get("hourly", {})
+                    ore = hourly.get("time", [])
                     lista_suolo = hourly.get("soil_moisture_3_to_9cm", [])
-                    lista_valida = [v for v in lista_suolo if v is not None]
-                    soil_mst = lista_valida[-1] if lista_valida else 0.22
                     
-                    # Interfaccia grafica a colonne
+                    # Estrazione ultimo valore valido per la metrica
+                    lista_valida = [v for v in lista_suolo if v is not None]
+                    soil_mst_attuale = lista_valida[-1] if lista_valida else 0.22
+                    
+                    # 3. DATI GIORNALIERI (PREVISIONI PIOGGIA 3 GIORNI)
+                    daily = dati.get("daily", {})
+                    giorni = daily.get("time", [])
+                    piogge_previste = daily.get("rain_sum", [0.0, 0.0, 0.0])
+                    
+                    pioggia_domani = piogge_previste[1] if len(piogge_previste) > 1 else 0.0
+                    pioggia_dopodomani = piogge_previste[2] if len(piogge_previste) > 2 else 0.0
+                    totale_pioggia_3gg = sum(piogge_previste)
+                    
+                    # --- INTERFACCIA: METRICHE METEO ---
+                    st.write("### 🌦️ Stato Attuale")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Temperatura Aria", f"{temp:.1f} °C")
                     c2.metric("Umidità Aria", f"{int(umidita_aria)} %")
-                    c3.metric("Pioggia Odierna", f"{pioggia:.1f} mm")
-                    c4.metric("Umidità Suolo", f"{soil_mst:.3f} m³/m³")
+                    c3.metric("Pioggia Oggi", f"{pioggia_odierna:.1f} mm")
+                    c4.metric("Umidità Suolo", f"{soil_mst_attuale:.3f} m³/m³")
                     
-                    # Regola decisionale agronomica
-                    st.write("### 🧠 Bilancio Idrico e Consiglio di Irrigazione")
+                    # --- INTERFACCIA: PREVISIONI 3 GIORNI ---
+                    st.write("### 📅 Previsioni Pioggia (Prossimi 3 Giorni)")
+                    cp1, cp2, cp3 = st.columns(3)
+                    
+                    def formatta_data(data_str):
+                        try:
+                            return datetime.strptime(data_str, "%Y-%m-%d").strftime("%d/%m")
+                        except:
+                            return data_str
+                    
+                    data_oggi = formatta_data(giorni[0]) if giorni else "Oggi"
+                    data_domani = formatta_data(giorni[1]) if len(giorni) > 1 else "Domani"
+                    data_dopodomani = formatta_data(giorni[2]) if len(giorni) > 2 else "Dopodomani"
+                    
+                    cp1.metric(f"Oggi ({data_oggi})", f"{piogge_previste[0]:.1f} mm")
+                    cp2.metric(f"Domani ({data_domani})", f"{pioggia_domani:.1f} mm")
+                    cp3.metric(f"Dopodomani ({data_dopodomani})", f"{pioggia_dopodomani:.1f} mm")
+                    
+                    # --- INTERFACCIA: GRAFICO STORICO ---
+                    st.write("### 📈 Andamento dell'Umidità del Suolo (72 Ore)")
+                    if ore and lista_suolo:
+                        # Creiamo un DataFrame per gestire i dati del grafico
+                        df_grafico = pd.DataFrame({
+                            "Data e Ora": pd.to_datetime(ore),
+                            "Umidità Suolo (m³/m³)": lista_suolo
+                        })
+                        # Impostiamo la colonna temporale come indice per il grafico di Streamlit
+                        df_grafico.set_index("Data e Ora", inplace=True)
+                        st.line_chart(df_grafico)
+                    else:
+                        st.warning("Dati storici del suolo temporaneamente non disponibili per il grafico.")
+                    
+                    # --- MOTOR DECISIONALE AGRONOMICO AVANZATO ---
+                    st.write("### 🧠 Bilancio Idrico Predittivo e Consiglio di Irrigazione")
                     fabbisogno_coltura = coltura_info["fabbisogno"]
                     soglia_critica = coltura_info["soglia_umidita"]
                     
-                    if pioggia >= fabbisogno_coltura:
-                        st.success(f"🌧️ **NON IRRIGARE:** La pioggia odierna ({pioggia:.1f} mm) copre il fabbisogno della pianta ({fabbisogno_coltura} mm).")
-                    elif soil_mst < soglia_critica:
-                        acqua_da_integrare = max(0.0, fabbisogno_coltura - pioggia)
+                    # Scenari decisionali incrociati con il meteo futuro
+                    if pioggia_odierna >= fabbisogno_coltura:
+                        st.success(f"🌧️ **NON IRRIGARE:** La pioggia reale di oggi ({pioggia_odierna:.1f} mm) ha già soddisfatto le necessità del {campo['coltura']}.")
+                    
+                    elif pioggia_domani >= fabbisogno_coltura:
+                        st.warning(f"⚠️ **ATTENZIONE - SOSPENSIONE PREVENTIVA:** Il terreno è asciutto, ma per domani sono previsti {pioggia_domani:.1f} mm di pioggia. Si consiglia di posticipare l'irrigazione per sfruttare l'acqua piovana ed evitare sprechi.")
+                    
+                    elif soil_mst_attuale < soglia_critica:
+                        # Calcolo acqua da integrare basato sul fabbisogno
+                        acqua_da_integrare = max(0.0, fabbisogno_coltura - pioggia_odierna)
                         tempo_ore = acqua_da_integrare / campo["portata"]
                         minuti = int(tempo_ore * 60)
                         
-                        st.error(f"🚨 **IRRIGAZIONE RICHIESTA:** Il terreno è sotto la soglia di stress idrico ({soil_mst:.3f} < {soglia_critica}).")
-                        st.warning(f"⏱ **Dosaggio consigliato:** Attiva l'impianto per **{minuti} minuti** per erogare i {acqua_da_integrare:.1f} mm mancanti.")
-                    else:
-                        st.info(f"✅ **IDRATAZIONE OTTIMALE:** Umidità del suolo stabile ({soil_mst:.3f}). Non è necessario irrigare.")
-                        
-            except Exception as e:
-                st.error(f"❌ Impossibile decifrare i dati meteo. Errore di rete: {e}")
+                        st.error(f"🚨 **IRRIGAZIONE RICHIESTA:** L'umidità del suolo ({soil_mst_attuale:.3f}) è inferiore alla soglia critica ({soglia_critica}). Le piogge imminenti non sono sufficienti.")
+                        st.warning(f"⏱ **Dosaggio consigliato:** Attiva l'impianto per **{minuti} minuti** per erogare i {acqua_da_integrare:.1f} mm necessari.")
