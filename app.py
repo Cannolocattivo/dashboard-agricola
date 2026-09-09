@@ -62,23 +62,27 @@ else:
             st.subheader(f"Analisi Campo: {campo['nome']} | Coltura: {campo['coltura']}")
             st.caption(f"Coordinate: {campo['lat']}, {campo['lon']} | Impianto: {campo['portata']} l/h/mq")
             
-            # URL fisso e immutabile per eliminare gli errori di incollaggio o di parsing
-            url_base = "https://open-meteo.com"
-            
-            # Parametrizzazione isolata: le virgole non vengono tradotte in %2C
-            richiesta_preparata = (
-                f"{url_base}?latitude={campo['lat']}&longitude={campo['lon']}"
-                f"&current=temperature_2m,relative_humidity_2m,rain"
+            # BLINDATURA REALE: Usiamo sessioni HTTP separate ed escludiamo la funzione di encoding 
+            # iniettando i parametri separati da "&" nativi direttamente all'interno della stringa dell'URL.
+            url_chiamata = (
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={campo['lat']}"
+                f"&longitude={campo['lon']}"
+                f"&current=temperature_2m&current=relative_humidity_2m&current=rain"
                 f"&hourly=soil_moisture_3_to_9cm"
-                f"&daily=rain_sum&forecast_days=3&timezone=auto"
+                f"&daily=rain_sum"
+                f"&forecast_days=3"
+                f"&timezone=auto"
             )
             
             try:
-                # Esecuzione della chiamata di rete sull'URL pre-compilato pulito
-                risposta = requests.get(richiesta_preparata, timeout=10)
+                # Interroghiamo l'indirizzo web forzato
+                sessione = requests.Session()
+                risposta = sessione.get(url_chiamata, timeout=12)
                 
                 if risposta.status_code != 200:
-                    st.error(f"⚠️ Il server meteo ha risposto con codice di errore {risposta.status_code}.")
+                    st.error(f"⚠️ Errore di comunicazione (Codice server: {risposta.status_code}).")
+                    st.text(f"Dettaglio tecnico del rifiuto: {risposta.text}")
                 else:
                     dati = risposta.json()
                     
@@ -149,7 +153,7 @@ else:
                     soglia_critica = coltura_info["soglia_umidita"]
                     
                     if pioggia_odierna >= fabbisogno_coltura:
-                        st.success(f"🌧️ **NON IRRIGARE:** La pioggia reale di oggi ({pioggia_odierna:.1f} mm) ha già soddisfatto le necessità del {campo['coltura']}.")
+                        st.success(f"🌧️ **NON IRRIGARE:** La pioggia reale di oggi ({pioggia_odierna:.1f} mm) copre il fabbisogno del {campo['coltura']}.")
                     elif pioggia_domani >= fabbisogno_coltura:
                         st.warning(f"⚠️ **SOSPENSIONE PREVENTIVA:** Il terreno è asciutto, ma per domani sono previsti {pioggia_domani:.1f} mm di pioggia. Si consiglia di posticipare l'irrigazione.")
                     elif soil_mst_attuale < soglia_critica:
@@ -158,7 +162,7 @@ else:
                         minuti = int(tempo_ore * 60)
                         
                         st.error(f"🚨 **IRRIGAZIONE RICHIESTA:** L'umidità del suolo ({soil_mst_attuale:.3f}) è inferiore alla soglia critica ({soglia_critica}).")
-                        st.warning(f"⏱ **Dosaggio consigliato:** Attiva l'impianto per **{minuti} minuti** per erogare i {acqua_da_integrare:.1f} mm necessari.")
+                        st.warning(f"⏱ **Dosaggio consigliato:** Attiva l'impianto per **{minuti}** minuti per erogare i {acqua_da_integrare:.1f} mm necessari.")
                     else:
                         st.info(f"✅ **IDRATAZIONE OTTIMALE:** L'umidità del suolo ({soil_mst_attuale:.3f}) è stabile. Nessun intervento richiesto.")
                         
