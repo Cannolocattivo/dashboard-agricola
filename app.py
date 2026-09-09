@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import requests
 import pandas as pd
@@ -731,4 +730,3 @@ with scheda_archivio:
             df_archivio,
             use_container_width=True
         )
-```
