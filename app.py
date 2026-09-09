@@ -60,26 +60,24 @@ else:
             st.subheader(f"Analisi Campo: {campo['nome']} | Coltura: {campo['coltura']}")
             st.caption(f"Coordinate: {campo['lat']}, {campo['lon']} | Impianto: {campo['portata']} l/h/mq")
             
-            # URL base dell'API meteo
+            # FORMATO FUNZIONANTE: Parametri passati come stringhe fisse senza array Python
             url_base = "https://open-meteo.com"
-            
-            # Parametrizzazione sicura: separiamo le voci dentro liste native di Python
             parametri_api = {
-                "latitude": campo["lat"],
-                "longitude": campo["lon"],
-                "current": ["temperature_2m", "relative_humidity_2m", "rain"],
-                "hourly": ["soil_moisture_3_to_9cm"],
+                "latitude": float(campo["lat"]),
+                "longitude": float(campo["lon"]),
+                "current": "temperature_2m,relative_humidity_2m,rain",
+                "hourly": "soil_moisture_3_to_9cm",
                 "timezone": "auto"
             }
             
             try:
-                # Chiamata HTTP
+                # Chiamata HTTP con stringhe pulite
                 risposta = requests.get(url_base, params=parametri_api, timeout=10)
                 
-                # Intercettiamo l'errore se il server risponde con codici di errore (es. 400, 500)
+                # Intercettiamo gli errori HTTP prima del parsing JSON
                 if risposta.status_code != 200:
-                    st.error(f"⚠️ Il server meteo ha rifiutato la richiesta (Codice Errore {risposta.status_code}). Verifica le coordinate.")
-                    st.text(f"Dettaglio server: {risposta.text}")
+                    st.error(f"⚠️ Il server meteo ha risposto con codice di errore {risposta.status_code}.")
+                    st.text(f"Risposta del server: {risposta.text}")
                 else:
                     dati = risposta.json()
                     
@@ -114,14 +112,12 @@ else:
                             tempo_ore = acqua_da_integrare / campo["portata"]
                             minuti = int(tempo_ore * 60)
                             
-                            st.error("🚨 **IRRIGAZIONE RICHIESTA:** Il terreno è sotto la soglia di stress idrico (%.3f < %.2f)." % (soil_mst, soglia_critica))
+                            st.error(f"🚨 **IRRIGAZIONE RICHIESTA:** Il terreno è sotto la soglia di stress idrico ({soil_mst:.3f} < {soglia_critica}).")
                             st.warning(f"⏱ **Dosaggio consigliato:** Attiva l'impianto per **{minuti} minuti** per erogare i {acqua_da_integrare:.1f} mm mancanti.")
                         else:
                             st.info(f"✅ **IDRATAZIONE OTTIMALE:** Umidità del suolo stabile ({soil_mst:.3f}). Non è necessario irrigare.")
                     else:
-                        st.error("⚠️ Struttura dati meteo non valida ricevuta dal server.")
+                        st.error("⚠️ Struttura dati meteo incompleta ricevuta dal server.")
                         
-            except requests.exceptions.JSONDecodeError:
-                st.error("❌ Errore critico: Il server meteo non ha risposto in formato JSON.")
             except Exception as e:
-                st.error(f"❌ Errore imprevisto durante la richiesta: {e}")
+                st.error(f"❌ Errore durante la richiesta: {e}")
