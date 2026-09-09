@@ -878,3 +878,4 @@ with archive_tab:
             pd.DataFrame(archive_rows),
             use_container_width=True,
             hide_index=True
+        )
