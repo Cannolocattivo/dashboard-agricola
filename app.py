@@ -1,23 +1,11 @@
 import streamlit as st
-import openmeteo_requests
-import requests_cache
 import requests
-from retry_requests import retry
 
 # Configurazione della pagina
 st.set_page_config(page_title="Dashboard Agricola Smart", layout="wide")
-st.title("🚜 Dashboard Agricola Professionale")
+st.title("🚜 Dashboard Agricola: Monitoraggio Campi")
 
-# Impostazione del client Open-Meteo ufficiale con cache e tentativi automatici
-@st.cache_resource
-def inizializza_meteo_client():
-    cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
-    retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-    return openmeteo_requests.Client(session=retry_session)
-
-openmeteo = inizializza_meteo_client()
-
-# Database agronomico locale di stabilità
+# Dizionario agronomico locale di stabilità
 DIZIONARIO_LOCALE = {
     "Pomodoro": {"fabbisogno": 5.0, "soglia_umidita": 0.25},
     "Mais": {"fabbisogno": 6.0, "soglia_umidita": 0.22},
@@ -70,55 +58,61 @@ else:
         
         with tab:
             st.subheader(f"Analisi Campo: {campo['nome']} | Coltura: {campo['coltura']}")
+            st.caption(f"Coordinate: {campo['lat']}, {campo['lon']} | Impianto: {campo['portata']} l/h/mq")
             
-            # Configurazione dei parametri tramite dizionario strutturato (Niente URL manuali)
-            params = {
+            # METODO SICURO: Passiamo i parametri come dizionario a requests.get
+            # Questo evita errori di battitura o problemi di parsing nell'URL di testo
+            url_base = "https://open-meteo.com"
+            parametri_api = {
                 "latitude": campo["lat"],
                 "longitude": campo["lon"],
-                "current": ["temperature_2m", "relative_humidity_2m", "rain"],
+                "current": "temperature_2m,relative_humidity_2m,rain",
                 "hourly": "soil_moisture_3_to_9cm",
                 "timezone": "auto"
             }
             
             try:
-                # Chiamata tramite SDK ufficiale Open-Meteo
-                responses = openmeteo.weather_api("https://open-meteo.com", params=params)
-                response = responses[0]
+                # Eseguiamo la chiamata in formato JSON standard (Nessun FlatBuffer binario)
+                risposta = requests.get(url_base, params=parametri_api, timeout=10)
+                dati = risposta.json()
                 
-                # Elaborazione dati correnti
-                current = response.Current()
-                temp = current.Variables(0).Value()
-                umidita_aria = current.Variables(1).Value()
-                pioggia = current.Variables(2).Value()
-                
-                # Elaborazione dati del suolo (orari)
-                hourly = response.Hourly()
-                soil_moisture_vals = hourly.Variables(0).ValuesAsNumpy()
-                soil_mst = float(soil_moisture_vals[-1]) if soil_moisture_vals is not None else 0.22
-                
-                # Interfaccia grafica a colonne
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Temperatura Aria", f"{temp:.1f} °C")
-                c2.metric("Umidità Aria", f"{int(umidita_aria)} %")
-                c3.metric("Pioggia Odierna", f"{pioxia:.1f} mm" if 'pioxia' in locals() else f"{pioggia:.1f} mm")
-                c4.metric("Umidità Suolo", f"{soil_mst:.3f} m³/m³")
-                
-                # Regola decisionale agronomica
-                st.write("### 🧠 Bilancio Idrico e Consiglio di Irrigazione")
-                fabbisogno_coltura = coltura_info["fabbisogno"]
-                soglia_critica = coltura_info["soglia_umidita"]
-                
-                if pioggia >= fabbisogno_coltura:
-                    st.success(f"🌧️ **NON IRRIGARE:** La pioggia odierna ({pioggia:.1f} mm) copre il fabbisogno della pianta ({fabbisogno_coltura} mm).")
-                elif soil_mst < soglia_critica:
-                    acqua_da_integrare = max(0.0, fabbisogno_coltura - pioggia)
-                    tempo_ore = acqua_da_integrare / campo["portata"]
-                    minuti = int(tempo_ore * 60)
+                if "current" in dati and "hourly" in dati:
+                    # Estrazione dati correnti
+                    current = dati["current"]
+                    temp = current.get("temperature_2m", 0.0)
+                    umidita_aria = current.get("relative_humidity_2m", 0.0)
+                    pioggia = current.get("rain", 0.0)
                     
-                    st.error(f"🚨 **IRRIGAZIONE RICHIESTA:** Il terreno è sotto la soglia di stress idrico per il {campo['coltura']} ({soil_mst:.3f} < {soglia_critica}).")
-                    st.warning(f"⏱️ **Dosaggio consigliato:** Attiva l'impianto per **{minuti} minuti**.")
+                    # Estrazione sicura umidità suolo
+                    lista_suolo = dati["hourly"].get("soil_moisture_3_to_9cm", [])
+                    lista_valida = [v for v in lista_suolo if v is not None]
+                    soil_mst = lista_valida[-1] if lista_valida else 0.22
+                    
+                    # Interfaccia grafica a colonne
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Temperatura Aria", f"{temp:.1f} °C")
+                    c2.metric("Umidità Aria", f"{int(umidita_aria)} %")
+                    c3.metric("Pioggia Odierna", f"{pioggia:.1f} mm")
+                    c4.metric("Umidità Suolo", f"{soil_mst:.3f} m³/m³")
+                    
+                    # Regola decisionale agronomica
+                    st.write("### 🧠 Bilancio Idrico e Consiglio di Irrigazione")
+                    fabbisogno_coltura = coltura_info["fabbisogno"]
+                    soglia_critica = coltura_info["soglia_umidita"]
+                    
+                    if pioggia >= fabbisogno_coltura:
+                        st.success(f"🌧️ **NON IRRIGARE:** La pioggia odierna ({pioggia:.1f} mm) copre il fabbisogno della pianta ({fabbisogno_coltura} mm).")
+                    elif soil_mst < soglia_critica:
+                        acqua_da_integrare = max(0.0, fabbisogno_coltura - pioggia)
+                        tempo_ore = acqua_da_integrare / campo["portata"]
+                        minuti = int(tempo_ore * 60)
+                        
+                        st.error(f"🚨 **%s RICHIESTA:** Il terreno è sotto la soglia di stress idrico ({soil_mst:.3f} < {soglia_critica})." % "IRRIGAZIONE")
+                        st.warning(f"⏱️ **Dosaggio consigliato:** Attiva l'impianto per **{minuti} minuti** per erogare i {acqua_da_integrare:.1f} mm mancanti.")
+                    else:
+                        st.info(f"✅ **IDRATAZIONE OTTIMALE:** Umidità del suolo stabile. Non è necessario irrigare.")
                 else:
-                    st.info(f"✅ **IDRATAZIONE OTTIMALE:** Umidità del suolo stabile. Non è necessario irrigare.")
+                    st.error("⚠️ Struttura dati meteo non valida ricevuta dal server.")
                     
             except Exception as e:
-                st.error(f"❌ Errore durante l'elaborazione dei dati meteo dell'SDK: {e}")
+                st.error(f"❌ Errore durante la richiesta dei dati meteo: {e}")
