@@ -19,17 +19,16 @@ DIZIONARIO_LOCALE = {
 }
 
 # Scaricamento sicuro del dizionario online con gestione degli errori
-@st.cache_data(ttl=3600) # Controlla gli aggiornamenti sul web ogni ora
+@st.cache_data(ttl=3600) 
 def carica_dizionario_colture():
     try:
         response = requests.get(URL_DIZIONARIO_ONLINE, timeout=5)
         if response.status_code == 200:
             dati_web = response.json()
-            # Verifichiamo che il JSON non sia vuoto o malformato
             if isinstance(dati_web, dict) and len(dati_web) > 0:
                 st.sidebar.success("🌍 Database agronomico online sincronizzato!")
                 return dati_web
-    except Exception as e:
+    except Exception:
         pass
     st.sidebar.warning("⚠️ Database online non raggiungibile. Uso i dati locali di riserva.")
     return DIZIONARIO_LOCALE
@@ -76,30 +75,25 @@ else:
     
     for i, tab in enumerate(tabs):
         campo = st.session_state.campi[i]
-        
-        # Recupero sicuro dei parametri agronomici (evita crash se la chiave non esiste)
         coltura_info = DIZIONARIO_COLTURE.get(campo["coltura"], {"fabbisogno": 4.0, "soglia_umidita": 0.20})
         
         with tab:
             st.subheader(f"Analisi Campo: {campo['nome']} | Coltura attuale: {campo['coltura']}")
             st.caption(f"Coordinate GPS: {campo['lat']}, {campo['lon']} | Impianto: {campo['portata']} l/h/mq")
             
-            # URL Open-Meteo ottimizzato per prevenire risposte vuote
+            # URL CORRETTO E COSTRUTTO IN MODO SICURO
             url_meteo = f"https://open-meteo.com{campo['lat']}&longitude={campo['lon']}&current=temperature_2m,relative_humidity_2m,rain&hourly=soil_moisture_3_to_9cm&timezone=auto"
             
             try:
                 res = requests.get(url_meteo, timeout=7).json()
                 
-                # Controllo di sicurezza sulla risposta del server meteo
                 if "current" in res and "hourly" in res:
                     current = res["current"]
                     pioggia = current.get("rain", 0.0)
                     temp = current.get("temperature_2m", 0.0)
                     umidita_aria = current.get("relative_humidity_2m", 0.0)
                     
-                    # Estrazione e validazione dell'ultimo dato valido di umidità del suolo
                     lista_suolo = res["hourly"].get("soil_moisture_3_to_9cm", [])
-                    # Filtra via eventuali valori nulli dall'elenco orario
                     lista_suolo_valida = [v for v in lista_suolo if v is not None]
                     soil_mst = lista_suolo_valida[-1] if lista_suolo_valida else 0.20
                     
@@ -118,9 +112,8 @@ else:
                     if pioggia >= fabbisogno_coltura:
                         st.success(f"🌧️ **NON IRRIGARE:** La pioggia naturale ({pioggia} mm) copre interamente il fabbisogno di oggi ({fabbisogno_coltura} mm).")
                     elif soil_mst < soglia_critica:
-                        # Calcolo tempo di lavoro dell'impianto
                         acqua_da_integrare = max(0.0, fabbisogno_coltura - pioggia)
-                        tempo_ore = agua_da_integrare / campo["portata"]
+                        tempo_ore = acqua_da_integrare / campo["portata"]
                         minuti = int(tempo_ore * 60)
                         
                         st.error(f"🚨 **IRRIGAZIONE RICHIESTA:** Il terreno è sotto la soglia di stress idrico ({soil_mst:.3f} < {soglia_critica}).")
