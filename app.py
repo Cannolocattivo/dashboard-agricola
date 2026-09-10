@@ -366,6 +366,43 @@ TIPI_TERRENO = [
     "Argilloso"
 ]
 
+# Terreni normalmente più adatti alle singole colture.
+# Non è un vincolo: serve solo come controllo prima del salvataggio.
+TERRENI_OTTIMALI = {
+    "Pomodoro": ["Franco-sabbioso", "Franco"],
+    "Mais": ["Franco", "Franco-argilloso"],
+    "Olivo": ["Sabbioso", "Franco-sabbioso", "Franco"],
+    "Vite": ["Sabbioso", "Franco-sabbioso", "Franco"],
+    "Patata": ["Sabbioso", "Franco-sabbioso"],
+    "Grano": ["Franco", "Franco-argilloso"],
+    "Peperone": ["Franco-sabbioso", "Franco"],
+    "Melanzana": ["Franco-sabbioso", "Franco"],
+    "Zucchina": ["Franco", "Franco-sabbioso"],
+    "Cetriolo": ["Franco-sabbioso", "Franco"],
+    "Lattuga": ["Franco", "Franco-sabbioso"],
+    "Cipolla": ["Sabbioso", "Franco-sabbioso"],
+    "Carota": ["Sabbioso", "Franco-sabbioso"],
+    "Fragola": ["Franco-sabbioso", "Franco"],
+    "Melo": ["Franco", "Franco-argilloso"],
+    "Pesco": ["Franco-sabbioso", "Franco"],
+    "Agrumi": ["Sabbioso", "Franco-sabbioso", "Franco"],
+    "Girasole": ["Franco", "Franco-argilloso"],
+    "Soia": ["Franco", "Franco-argilloso"],
+    "Melone": ["Sabbioso", "Franco-sabbioso"],
+    "Cocomero": ["Sabbioso", "Franco-sabbioso"],
+    "Broccolo": ["Franco", "Franco-sabbioso"],
+    "Cavolfiore": ["Franco", "Franco-sabbioso"],
+    "Spinaci": ["Franco", "Franco-sabbioso"],
+    "Fagiolo": ["Franco", "Franco-sabbioso"],
+    "Pisello": ["Franco", "Franco-sabbioso"],
+    "Riso": ["Franco-argilloso", "Argilloso"],
+    "Orzo": ["Franco", "Franco-argilloso"],
+    "Avena": ["Franco", "Franco-argilloso"],
+    "Mandorlo": ["Sabbioso", "Franco-sabbioso", "Franco"],
+    "Noce": ["Franco", "Franco-argilloso"],
+    "Erba medica": ["Franco", "Franco-argilloso"]
+}
+
 # Il terreno modifica la soglia di umidità: sui terreni più drenanti
 # conviene intervenire prima, mentre quelli argillosi trattengono più acqua.
 FATTORE_TERRENO = {
@@ -565,6 +602,25 @@ def mostra_registro(campo):
     )
 
 
+def colture_non_ottimali(coltivazioni, terreno):
+    """Restituisce le colture che non sono nella fascia di terreno consigliata."""
+    problemi = []
+    for coltura in coltivazioni:
+        terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
+        if terreno not in terreni_ok:
+            problemi.append({
+                "coltura": coltura,
+                "terreni_ok": terreni_ok
+            })
+    return problemi
+
+
+def salva_nuovo_campo(dati):
+    st.session_state.campi.append(dati)
+    salva_dati()
+    st.rerun()
+
+
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -616,8 +672,7 @@ with st.sidebar.form("form_c", clear_on_submit=True):
     sub = st.form_submit_button("Salva")
 
     if sub and n_nome and n_colt:
-
-        st.session_state.campi.append({
+        nuovo_campo = {
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
@@ -627,10 +682,51 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
             "registro": []
-        })
+        }
 
-        salva_dati()
-        st.rerun()
+        problemi_terreno = colture_non_ottimali(n_colt, n_terr)
+
+        if problemi_terreno:
+            st.session_state.campo_da_confermare = nuovo_campo
+            st.session_state.problemi_terreno = problemi_terreno
+            st.rerun()
+        else:
+            salva_nuovo_campo(nuovo_campo)
+
+
+# Se la combinazione coltivazione/terreno non è consigliata,
+# chiediamo una conferma esplicita prima di creare il campo.
+if st.session_state.get("campo_da_confermare"):
+    campo_proposto = st.session_state.campo_da_confermare
+    problemi_terreno = st.session_state.get("problemi_terreno", [])
+
+    st.sidebar.warning(
+        f"La combinazione scelta per **{campo_proposto['nome']}** non è quella normalmente consigliata."
+    )
+
+    for problema in problemi_terreno:
+        st.sidebar.write(
+            f"**{problema['coltura']}** → terreno **{campo_proposto['terreno']}**. "
+            f"Più indicati: {', '.join(problema['terreni_ok'])}."
+        )
+
+    conferma = st.sidebar.checkbox(
+        "Voglio comunque utilizzare questo terreno",
+        key="conferma_terreno"
+    )
+
+    c_ok, c_no = st.sidebar.columns(2)
+
+    with c_ok:
+        if st.button("Conferma", key="conferma_campo", disabled=not conferma, use_container_width=True):
+            salva_nuovo_campo(campo_proposto)
+
+    with c_no:
+        if st.button("Annulla", key="annulla_campo", use_container_width=True):
+            st.session_state.pop("campo_da_confermare", None)
+            st.session_state.pop("problemi_terreno", None)
+            st.session_state.pop("conferma_terreno", None)
+            st.rerun()
 
 
 if st.sidebar.button("💾 Salva dati"):
@@ -870,8 +966,7 @@ with t_mon:
                             "stato": stato_colt,
                             "acqua": acqua,
                             "minuti": minuti,
-                            "maturazione": info["giorni_maturazione"],
-                            "giorni_rimasti": giorni_rimasti
+                            "maturazione": info["giorni_maturazione"]
                         })
 
                     # Irrigazione contemporanea: un solo impianto alimenta
@@ -1214,11 +1309,15 @@ with t_map:
             for c in st.session_state.campi
         ])
 
+        # Punti ben visibili anche con i temi chiari/scuri di Streamlit.
         layer = pdk.Layer(
             "ScatterplotLayer",
             data=df_m,
             get_position="[longitude, latitude]",
-            get_radius=140,
+            get_radius=180,
+            get_fill_color=[38, 122, 72, 210],
+            get_line_color=[20, 70, 40, 255],
+            line_width_min_pixels=2,
             pickable=True,
             stroked=True,
             filled=True
@@ -1229,9 +1328,24 @@ with t_map:
             data=df_m,
             get_position="[longitude, latitude]",
             get_text="Campo",
-            get_size=18,
+            get_size=17,
+            get_color=[30, 45, 35, 255],
             get_alignment_baseline="bottom",
-            get_pixel_offset=[0, -12],
+            get_pixel_offset=[0, -18],
+            billboard=True,
+            pickable=False
+        )
+
+        colture_labels = pdk.Layer(
+            "TextLayer",
+            data=df_m,
+            get_position="[longitude, latitude]",
+            get_text="Coltivazioni",
+            get_size=12,
+            get_color=[70, 80, 70, 255],
+            get_alignment_baseline="top",
+            get_pixel_offset=[0, 18],
+            billboard=True,
             pickable=False
         )
 
@@ -1243,8 +1357,9 @@ with t_map:
 
         st.pydeck_chart(
             pdk.Deck(
-                layers=[layer, labels],
+                layers=[layer, labels, colture_labels],
                 initial_view_state=view,
+                map_style="light",
                 tooltip={
                     "html": "<b>{Campo}</b><br/>Coltivazioni: {Coltivazioni}<br/>Terreno: {Terreno}",
                 }
@@ -1253,3 +1368,82 @@ with t_map:
         )
 
         st.caption("I nomi dei campi sono mostrati direttamente sulla mappa; passando sul punto trovi anche coltivazioni e terreno.")
+
+    else:
+
+        st.info("Nessun campo.")
+
+
+# ============================================================
+# ARCHIVIO
+# ============================================================
+
+with t_arc:
+
+    st.write("## 🗄️ Storico campi")
+
+    if not st.session_state.archivio:
+
+        st.caption("Vuoto.")
+
+    else:
+
+        for campo in st.session_state.archivio:
+
+            coltivazioni_arch = campo.get("coltivazioni") or [campo.get("coltura", "")]
+            terreno_arch = campo.get("terreno", "Franco")
+
+            with st.expander(
+                f"🌾 {campo['nome']} — {', '.join(coltivazioni_arch)}",
+                expanded=False
+            ):
+
+                c1, c2, c3, c4 = st.columns(4)
+
+                c1.metric(
+                    "Quintali",
+                    f"{campo.get('quintali', 0):.1f}"
+                )
+
+                c2.metric(
+                    "Semina",
+                    campo.get(
+                        "data_semina",
+                        "-"
+                    )
+                )
+
+                c3.metric(
+                    "Raccolto",
+                    campo.get(
+                        "data_raccolto",
+                        "-"
+                    )
+                )
+
+                c4.metric(
+                    "Terreno",
+                    terreno_arch
+                )
+
+                st.write("**Coltivazioni:** " + ", ".join(coltivazioni_arch))
+                st.write(f"**Tipologia terreno:** {terreno_arch}")
+                st.write(
+                    f"**Note:** {campo.get('note', '-')}"
+                )
+
+                st.write(
+                    "### 📚 Registro cronologico completo"
+                )
+
+                mostra_registro(campo)
+
+
+# ============================================================
+# NOTA PERSISTENZA
+# ============================================================
+
+st.sidebar.caption(
+    "💾 Il registro giornaliero viene salvato "
+    "automaticamente in agri_data.json"
+)
