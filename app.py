@@ -598,7 +598,7 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
-            "coltura": coltura,
+            "coltura": n_colt,
             "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
@@ -833,7 +833,7 @@ with t_mon:
 
                     minuti = (acqua / campo["portata"]) * 60 if campo["portata"] > 0 else 0
                     calcoli_irr.append({
-                        "coltura": coltura,
+                        "coltura": n_colt,
                         "fabbisogno": fabb,
                         "soglia": sogl,
                         "stato": stato_colt,
@@ -976,7 +976,7 @@ with t_mon:
 
                         evento_forzatura = {
                             "campo": campo["nome"],
-                            "coltura": coltura,
+                            "coltura": n_colt,
                             "terreno": terreno,
                             "data": ora_forzatura.strftime("%Y-%m-%d"),
                             "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
@@ -1017,7 +1017,7 @@ with t_mon:
 
                 dati_giorno = {
                     "campo": campo["nome"],
-                    "coltura": coltura,
+                    "coltura": n_colt,
                     "terreno": terreno,
                     "tipo_evento": "giornaliero",
                     "data": oggi,
