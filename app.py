@@ -655,9 +655,9 @@ if st.session_state.get("campo_da_confermare"):
 # Schede principali
 
 t_mon, t_map, t_arc = st.tabs([
-    "📊 Monitoraggio parametri",
-    "🗺️ Mappa dei campi",
-    "🗄️ Archivio campi chiusi "
+    "📊 Monitoraggio",
+    "🗺️ Mappa",
+    "🗄️ Archivio"
 ])
 
 # Monitoraggio dei campi
@@ -837,8 +837,9 @@ with t_mon:
                         "maturazione": info["giorni_maturazione"]
                     })
 
-                # Irrigazione un solo impianto alimenta
-                #  la coltivazione del campo
+                # Irrigazione contemporanea: un solo impianto alimenta
+                # tutte la coltivazione del campo, quindi non sommiamo
+                # i minuti delle colture (evitando di irrigare due volte).
                 attive = [x for x in calcoli_irr if x["stato"] == "💧 Attiva"]
                 if not meteo_pronto:
                     attive = []
@@ -893,8 +894,6 @@ with t_mon:
                     campo.get("irrigazione_forzata", False)
                 )
 
-                # Il pulsante "Forza irrigazione" è attivo solo quando lo stato dell'irrigazione è "sospesa"
-              
                 forza_disabilitata = (
                     s_irr != "🚫 Sospesa"
                     or irrigazione_forzata_attiva
@@ -910,8 +909,7 @@ with t_mon:
                         use_container_width=True
                     )
 
-                # Il pulsante che blocca l'irrigazione forzata è visibile solo dopo ave attivato l'irrigazione forzata.
-                   with col_stop:
+                with col_stop:
                     ferma_forzatura = st.button(
                         "⏹️ Ferma irrigazione forzata",
                         key=f"azione_stop_forza_{idx}",
@@ -1036,6 +1034,7 @@ with t_mon:
 
                 if ferma_forzatura and irrigazione_forzata_attiva:
                     ora_stop = datetime.now()
+
                     campo["irrigazione_forzata"] = False
                     campo["irrigazione_attiva"] = False
                     campo["forzatura_fine_effettiva"] = (
@@ -1070,11 +1069,12 @@ with t_mon:
                     salva_dati()
 
                     st.success(
-                        f"Irrigazione forzata fermata alle {ora_stop.strftime('%H:%M:%S')}."
+                        f"Irrigazione forzata fermata alle "
+                        f"{ora_stop.strftime('%H:%M:%S')}."
                     )
                     st.rerun()
 
-             # Registrazione automatica dei dati giornaliera
+# Registrazione Automatica Giornaliera
 
                 dati_giorno = {
                     "campo": campo["nome"],
@@ -1109,8 +1109,8 @@ with t_mon:
                 # La stessa data viene aggiornata e non duplicata.
                 salva_dati()
 
-# Storico dei parametri reggistrati giornalmente
-                
+# Parametri D'Intervento Giornalieri
+
                 st.write(
                     "### 📋 Parametri d'Intervento Giornalieri"
                 )
@@ -1282,99 +1282,25 @@ with t_mon:
 
 # Chiusura Campo
 
-                with st.form(
-                    f"f_ch_{idx}"
-                ):
+                st.write("🏁 Chiusura")
 
-                    st.write("🏁 Chiusura")
+                cx1, cx2 = st.columns(2)
 
-                    cx1, cx2 = st.columns(2)
+                with cx1:
 
-                    with cx1:
-
-                        q_rac = st.number_input(
-                            "Quintali *",
-                            min_value=0.1,
-                            step=0.1,
-                            key=f"q_{idx}"
-                        )
-
-                    with cx2:
-
-                        n_rac = st.text_input(
-                            "Note",
-                            key=f"n_{idx}"
-                        )
-
-                    ##btn = st.form_submit_button(
-                     ##   "🎉 Salva"
+                    q_rac = st.number_input(
+                        "Quintali *",
+                        min_value=0.1,
+                        step=0.1,
+                        key=f"q_{idx}"
                     )
 
-                    if btn:
+                with cx2:
 
-                        campo["data_raccolto"] = (
-                            datetime.now().strftime(
-                                "%d/%m/%Y"
-                            )
-                        )
-
-                        campo["quintali"] = q_rac
-
-                        campo["note"] = (
-                            n_rac
-                            if n_rac
-                            else "Standard"
-                        )
-
-                        # Salviamo nel registro anche l'evento
-                        # di raccolta, mantenendo la cronologia.
-                        campo.setdefault(
-                            "registro",
-                            []
-                        ).append({
-                            "data": oggi,
-                            "ora_rilevazione": (
-                                datetime.now().strftime(
-                                    "%H:%M:%S"
-                                )
-                            ),
-                            "stato": "🎉 RACCOLTA",
-                            "temperatura": temp,
-                            "umidita_aria": umid,
-                            "pioggia": piog,
-                            "vento": vent,
-                            "radiazione": rads,
-                            "umidita_suolo": soil,
-                            "pioggia_giornaliera": p_dom,
-                            "inizio": "",
-                            "fine": "",
-                            "erogata": 0.0,
-                            "risparmiata": 0.0,
-                            "quintali": q_rac,
-                            "note": (
-                                n_rac
-                                if n_rac
-                                else "Standard"
-                            )
-                        })
-
-                        # Il campo raccolto passa nello storico
-                        # mantenendo TUTTO il registro.
-                        st.session_state.archivio.append(
-                            campo.copy()
-                        )
-
-                        st.session_state.campi.pop(
-                            idx
-                        )
-
-                        salva_dati()
-
-                        st.success(
-                            "Campo archiviato con registro completo!"
-                        )
-
-                        st.rerun()
+                    n_rac = st.text_input(
+                        "Note",
+                        key=f"n_{idx}"
+                    )
 
                 # Azioni finali della scheda del campo.
                 # I due pulsanti sono sempre visibili e chiedono conferma
@@ -1410,9 +1336,70 @@ with t_mon:
                             type="primary",
                             use_container_width=True
                         ):
+                            campo["data_raccolto"] = (
+                                datetime.now().strftime(
+                                    "%d/%m/%Y"
+                                )
+                            )
+
+                            campo["quintali"] = q_rac
+
+                            campo["note"] = (
+                                n_rac
+                                if n_rac
+                                else "Standard"
+                            )
+
+                            # Salviamo nel registro anche l'evento
+                            # di raccolta, mantenendo la cronologia.
+                            campo.setdefault(
+                                "registro",
+                                []
+                            ).append({
+                                "data": oggi,
+                                "ora_rilevazione": (
+                                    datetime.now().strftime(
+                                        "%H:%M:%S"
+                                    )
+                                ),
+                                "stato": "🎉 RACCOLTA",
+                                "temperatura": temp,
+                                "umidita_aria": umid,
+                                "pioggia": piog,
+                                "vento": vent,
+                                "radiazione": rads,
+                                "umidita_suolo": soil,
+                                "pioggia_giornaliera": p_dom,
+                                "inizio": "",
+                                "fine": "",
+                                "erogata": 0.0,
+                                "risparmiata": 0.0,
+                                "quintali": q_rac,
+                                "note": (
+                                    n_rac
+                                    if n_rac
+                                    else "Standard"
+                                )
+                            })
+
+                            # Il campo raccolto passa nello storico
+                            # mantenendo TUTTO il registro.
+                            st.session_state.archivio.append(
+                                campo.copy()
+                            )
+
+                            st.session_state.campi.pop(
+                                idx
+                            )
+
                             salva_dati()
                             st.session_state[f"richiesta_salva_{idx}"] = False
                             st.session_state[f"campo_chiuso_{idx}"] = True
+
+                            st.success(
+                                "Campo archiviato con registro completo!"
+                            )
+
                             st.rerun()
 
                     with c_no:
