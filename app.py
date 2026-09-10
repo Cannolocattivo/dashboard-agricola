@@ -1,5 +1,4 @@
-import streamlit as st
-import requests
+
 import pandas as pd
 import json
 import pydeck as pdk
@@ -252,8 +251,8 @@ FATTORE_TERRENO = {
 }
 
 
-# Il servizio meteo ogni tanto può metterci qualche secondo in più.
-# Evitiamo quindi di far pesare questo problema su tutta la dashboard.
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def richiesta_meteo(url):
     ultimo_errore = None
@@ -275,6 +274,46 @@ def richiesta_meteo(url):
     raise RuntimeError(f"servizio meteo non raggiungibile: {ultimo_errore}")
 
 
+def descrizione_meteo(codice):
+    """Restituisce una descrizione semplice della condizione meteo."""
+    descrizioni = {
+        0: "Sereno",
+        1: "Prevalentemente sereno",
+        2: "Parzialmente nuvoloso",
+        3: "Coperto",
+        45: "Nebbia",
+        48: "Nebbia con brina",
+        51: "Pioviggine debole",
+        53: "Pioviggine",
+        55: "Pioviggine intensa",
+        56: "Pioviggine gelata debole",
+        57: "Pioviggine gelata intensa",
+        61: "Pioggia debole",
+        63: "Pioggia",
+        65: "Pioggia intensa",
+        66: "Pioggia gelata debole",
+        67: "Pioggia gelata intensa",
+        71: "Neve debole",
+        73: "Neve",
+        75: "Neve intensa",
+        77: "Nevischio",
+        80: "Rovesci deboli",
+        81: "Rovesci",
+        82: "Rovesci intensi",
+        85: "Rovesci di neve deboli",
+        86: "Rovesci di neve intensi",
+        95: "Temporale",
+        96: "Temporale con grandine debole",
+        99: "Temporale con grandine intensa",
+    }
+    return descrizioni.get(codice, "Condizione non disponibile")
+
+
+def sta_piovendo(codice):
+    """Indica se il codice meteo corrisponde a pioggia o rovesci."""
+    return codice in {51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99}
+
+
 def leggi_meteo(campo):
     url = (
         "https://api.open-meteo.com/v1/forecast?"
@@ -284,8 +323,9 @@ def leggi_meteo(campo):
         "temperature_2m,"
         "relative_humidity_2m,"
         "rain,"
-        "wind_speed_10m,"
-        "shortwave_radiation&"
+        "precipitation,"
+        "weather_code,"
+        "wind_speed_10m&"
         "hourly=soil_moisture_3_to_9cm&"
         "daily=rain_sum&"
         "forecast_days=3&"
@@ -295,8 +335,8 @@ def leggi_meteo(campo):
     try:
         dati = richiesta_meteo(url)
 
-        # Teniamo in memoria l'ultima risposta buona, così un piccolo
-        # problema di rete non manda in tilt il monitoraggio.
+
+
         campo["ultimo_meteo"] = {
             "current": dati.get("current", {}),
             "hourly": {
@@ -323,8 +363,8 @@ def leggi_meteo(campo):
                 f"Il servizio meteo non risponde. Sto usando l'ultima lettura valida ({quando})."
             )
 
-        # Se non abbiamo nemmeno una lettura precedente, non inventiamo
-        # valori che potrebbero far partire un'irrigazione per errore.
+
+
         return (
             {
                 "current": {},
@@ -496,10 +536,8 @@ def mostra_registro(campo):
     righe = []
 
     for r in reversed(registro):
-        # I parametri visualizzati nel registro devono essere quelli
-        # effettivamente associati alla singola registrazione, non quelli
-        # attualmente impostati sul campo. In questo modo, dopo una
-        # modifica del campo, lo storico conserva i parametri precedenti.
+
+
         righe.append({
             "Campo": r.get("campo", campo.get("nome", "")),
             "Coltivazione": r.get("coltura", campo.get("coltura", "")),
@@ -905,6 +943,10 @@ with t_mon:
                 temp = cur.get("temperature_2m", 0.0)
                 umid = cur.get("relative_humidity_2m", 0.0)
                 piog = cur.get("rain", 0.0)
+                precipitazione = cur.get("precipitation", 0.0)
+                codice_meteo = cur.get("weather_code")
+                condizione_meteo = descrizione_meteo(codice_meteo)
+                pioggia_attuale = sta_piovendo(codice_meteo)
                 vent = cur.get("wind_speed_10m", 0.0)
                 rads = cur.get("shortwave_radiation", 0.0)
 
@@ -967,7 +1009,7 @@ with t_mon:
                 )
 
                 c3.metric(
-                    "Pioggia",
+                    "Pioggia ultima ora",
                     f"{piog:.1f} mm"
                 )
 
@@ -985,6 +1027,11 @@ with t_mon:
                     "Umidità Suolo",
                     f"{soil:.3f}"
                 )
+
+                if pioggia_attuale:
+                    st.info(f"🌧️ {condizione_meteo}. L'irrigazione viene sospesa mentre sta piovendo.")
+                else:
+                    st.caption(f"Condizione attuale: {condizione_meteo} · Precipitazione rilevata: {precipitazione:.1f} mm")
 
 # Calcolo Irrigazione
 
@@ -1005,7 +1052,10 @@ with t_mon:
                     sogl = info["soglia_umidita"]
                     intg = max(0.0, fabb - piog)
 
-                    if piog >= fabb or p_dom >= fabb:
+                    if pioggia_attuale:
+                        stato_colt = "🌧️ Sospesa per pioggia"
+                        acqua = 0.0
+                    elif piog >= fabb or p_dom >= fabb:
                         stato_colt = "🚫 Sospesa"
                         acqua = 0.0
                     elif soil < sogl:
