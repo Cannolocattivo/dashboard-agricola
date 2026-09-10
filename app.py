@@ -655,9 +655,9 @@ if st.session_state.get("campo_da_confermare"):
 # Schede principali
 
 t_mon, t_map, t_arc = st.tabs([
-    "📊 Monitoraggio",
-    "🗺️ Mappa",
-    "🗄️ Archivio"
+    "📊 Monitoraggio parametri",
+    "🗺️ Mappa campi",
+    "🗄️ Archivio campi chiusi "
 ])
 
 # Monitoraggio dei campi
@@ -837,9 +837,8 @@ with t_mon:
                         "maturazione": info["giorni_maturazione"]
                     })
 
-                # Irrigazione contemporanea: un solo impianto alimenta
-                # tutte la coltivazione del campo, quindi non sommiamo
-                # i minuti delle colture (evitando di irrigare due volte).
+                # Irrigazione un solo impianto alimenta
+                #  la coltivazione del campo
                 attive = [x for x in calcoli_irr if x["stato"] == "💧 Attiva"]
                 if not meteo_pronto:
                     attive = []
@@ -894,8 +893,8 @@ with t_mon:
                     campo.get("irrigazione_forzata", False)
                 )
 
-                # "Forza irrigazione" è disponibile soltanto quando
-                # l'irrigazione per la coltivazione è sospesa.
+                # Il pulsante "Forza irrigazione" è attivo solo quando lo stato dell'irrigazione è "sospesa"
+              
                 forza_disabilitata = (
                     s_irr != "🚫 Sospesa"
                     or irrigazione_forzata_attiva
@@ -911,9 +910,8 @@ with t_mon:
                         use_container_width=True
                     )
 
-                # Il pulsante STOP resta sempre visibile.
-                # Diventa attivo solo dopo la conferma effettiva della forzatura.
-                with col_stop:
+                # Il pulsante che blocca l'irrigazione forzata è visibile solo dopo ave attivato l'irrigazione forzata.
+                   with col_stop:
                     ferma_forzatura = st.button(
                         "⏹️ Ferma irrigazione forzata",
                         key=f"azione_stop_forza_{idx}",
@@ -1076,7 +1074,7 @@ with t_mon:
                     )
                     st.rerun()
 
-# Registrazione Automatica Giornaliera
+             # Registrazione automatica dei dati giornaliera
 
                 dati_giorno = {
                     "campo": campo["nome"],
@@ -1111,8 +1109,8 @@ with t_mon:
                 # La stessa data viene aggiornata e non duplicata.
                 salva_dati()
 
-# Parametri D'Intervento Giornalieri
-
+# Storico dei parametri reggistrati giornalmente
+                
                 st.write(
                     "### 📋 Parametri d'Intervento Giornalieri"
                 )
