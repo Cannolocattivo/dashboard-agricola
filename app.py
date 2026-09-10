@@ -589,55 +589,12 @@ with st.sidebar.form("form_c", clear_on_submit=True):
         datetime.now()
     )
 
-    col_salva, col_cancella = st.columns(2)
-    
-    with col_salva:
-        if st.button(
-            "Salva e chiudi campo",
-            key=f"salva_chiudi_{campo['nome']}"
-        ):
-            st.session_state[f"conferma_salva_{campo['nome']}"] = True
-    
-    with col_cancella:
-        if st.button(
-            "Cancella senza salvare",
-            key=f"cancella_campo_{campo['nome']}"
-        ):
-            st.session_state[f"conferma_cancella_{campo['nome']}"] = True
-    
-    if st.session_state.get(f"conferma_salva_{campo['nome']}", False):
-        st.warning("Vuoi davvero salvare le modifiche e chiudere il campo?")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Conferma salvataggio", key=f"ok_salva_{campo['nome']}"):
-                salva_dati()
-                st.session_state[f"conferma_salva_{campo['nome']}"] = False
-                st.session_state[f"campo_aperto_{campo['nome']}"] = False
-                st.rerun()
-        with c2:
-            if st.button("Annulla", key=f"annulla_salva_{campo['nome']}"):
-                st.session_state[f"conferma_salva_{campo['nome']}"] = False
-                st.rerun()
-    
-    if st.session_state.get(f"conferma_cancella_{campo['nome']}", False):
-        st.warning("Vuoi davvero cancellare le modifiche senza salvare?")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Conferma cancellazione", key=f"ok_cancella_{campo['nome']}"):
-                st.session_state[f"conferma_cancella_{campo['nome']}"] = False
-                st.session_state[f"campo_aperto_{campo['nome']}"] = False
-                st.rerun()
-        with c2:
-            if st.button("Annulla", key=f"annulla_cancella_{campo['nome']}"):
-                st.session_state[f"conferma_cancella_{campo['nome']}"] = False
-                st.rerun()
-
     if sub and n_nome and n_colt:
         nuovo_campo = {
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
-            "coltura": n_colt,
+            "coltura": coltura,
             "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
@@ -732,9 +689,14 @@ with t_mon:
             coltura = campo.get("coltura", "Pomodoro")
             terreno = campo.get("terreno", "Franco")
 
+            stato_campo = campo.get("stato", "")
+            titolo_campo = f"🌿 {campo['nome']} — {coltura}"
+            if stato_campo == "campo cancellato":
+                titolo_campo += " — campo cancellato"
+
             with st.expander(
-                f"🌿 {campo['nome']} — {coltura}",
-                expanded=True
+                titolo_campo,
+                expanded=not st.session_state.get(f"campo_chiuso_{idx}", False)
             ):
 
                 conferma_ok = st.session_state.get("irrigazione_forzata_confermata")
@@ -1008,7 +970,7 @@ with t_mon:
 
                         evento_forzatura = {
                             "campo": campo["nome"],
-                            "coltura": n_colt,
+                            "coltura": coltura,
                             "terreno": terreno,
                             "data": ora_forzatura.strftime("%Y-%m-%d"),
                             "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
@@ -1049,7 +1011,7 @@ with t_mon:
 
                 dati_giorno = {
                     "campo": campo["nome"],
-                    "coltura": n_colt,
+                    "coltura": coltura,
                     "terreno": terreno,
                     "tipo_evento": "giornaliero",
                     "data": oggi,
@@ -1346,6 +1308,103 @@ with t_mon:
                         )
 
                         st.rerun()
+
+                # Azioni finali della scheda del campo.
+                # I due pulsanti sono sempre visibili e chiedono conferma
+                # prima di eseguire l'azione.
+                col_salva, col_cancella = st.columns(2)
+
+                with col_salva:
+                    if st.button(
+                        "Salva e chiudi campo",
+                        key=f"salva_chiudi_{idx}",
+                        use_container_width=True
+                    ):
+                        st.session_state[f"conferma_salva_{idx}"] = True
+
+                with col_cancella:
+                    if st.button(
+                        "Cancella senza salvare",
+                        key=f"cancella_senza_salvare_{idx}",
+                        use_container_width=True
+                    ):
+                        st.session_state[f"conferma_cancella_{idx}"] = True
+
+                if st.session_state.get(f"conferma_salva_{idx}", False):
+                    st.warning(
+                        f"Vuoi davvero salvare i dati e chiudere il campo **{campo['nome']}**?"
+                    )
+                    c_ok, c_no = st.columns(2)
+
+                    with c_ok:
+                        if st.button(
+                            "Conferma e chiudi",
+                            key=f"conferma_salva_{idx}",
+                            type="primary",
+                            use_container_width=True
+                        ):
+                            salva_dati()
+                            st.session_state[f"conferma_salva_{idx}"] = False
+                            st.session_state[f"campo_chiuso_{idx}"] = True
+                            st.rerun()
+
+                    with c_no:
+                        if st.button(
+                            "Annulla",
+                            key=f"annulla_salva_{idx}",
+                            use_container_width=True
+                        ):
+                            st.session_state[f"conferma_salva_{idx}"] = False
+                            st.rerun()
+
+                if st.session_state.get(f"conferma_cancella_{idx}", False):
+                    st.warning(
+                        f"Vuoi davvero cancellare le modifiche del campo **{campo['nome']}** senza salvarle?"
+                    )
+                    c_ok, c_no = st.columns(2)
+
+                    with c_ok:
+                        if st.button(
+                            "Conferma cancellazione",
+                            key=f"conferma_cancella_{idx}",
+                            type="primary",
+                            use_container_width=True
+                        ):
+                            # Se il campo esiste già nei dati salvati, non lo
+                            # eliminiamo fisicamente: lo manteniamo nello storico
+                            # e lo marchiamo come "campo cancellato".
+                            campo_salvato = False
+                            for campo_salvato_item in st.session_state.get("campi", []):
+                                if (
+                                    campo_salvato_item.get("nome") == campo.get("nome")
+                                    and campo_salvato_item is not campo
+                                ):
+                                    campo_salvato = True
+                                    campo_salvato_item["stato"] = "campo cancellato"
+                                    campo_salvato_item["campo_cancellato"] = True
+                                    campo_salvato_item["data_cancellazione"] = (
+                                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    )
+
+                            # Se invece il campo non era ancora presente tra i
+                            # dati salvati, vengono semplicemente annullate le
+                            # modifiche correnti.
+                            st.session_state[f"conferma_cancella_{idx}"] = False
+                            st.session_state[f"campo_chiuso_{idx}"] = True
+
+                            if campo_salvato:
+                                salva_dati()
+
+                            st.rerun()
+
+                    with c_no:
+                        if st.button(
+                            "Annulla",
+                            key=f"annulla_cancella_{idx}",
+                            use_container_width=True
+                        ):
+                            st.session_state[f"conferma_cancella_{idx}"] = False
+                            st.rerun()
 
 # Mappa dei campi
 
