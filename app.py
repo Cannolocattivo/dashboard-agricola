@@ -689,15 +689,14 @@ def mostra_registro(campo):
 
 
 def coltura_non_ottimale(coltura, terreno):
-    """Restituisce le colture che non sono nella fascia di terreno consigliata."""
+    """Controlla la singola coltura del campo rispetto al terreno scelto."""
     problemi = []
-    for coltura in [campo.get("coltura", "")]:
-        terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
-        if terreno not in terreni_ok:
-            problemi.append({
-                "coltura": coltura,
-                "terreni_ok": terreni_ok
-            })
+    terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
+    if terreno not in terreni_ok:
+        problemi.append({
+            "coltura": coltura,
+            "terreni_ok": terreni_ok
+        })
     return problemi
 
 
@@ -758,7 +757,7 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
-            "coltura": n_colt[0],
+            "coltura": n_colt,
             "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
@@ -1595,3 +1594,27 @@ with t_arc:
                         "-"
                     )
                 )
+
+                c4.metric(
+                    "Terreno",
+                    terreno_arch
+                )
+
+                st.write("**Coltivazione:** " + coltivazione_arch)
+                st.write(f"**Tipologia terreno:** {terreno_arch}")
+                st.write(
+                    f"**Note:** {campo.get('note', '-')}"
+                )
+
+                st.write(
+                    "### 📚 Registro cronologico completo"
+                )
+
+                mostra_registro(campo)
+
+# Salvataggio automatico
+
+st.sidebar.caption(
+    "💾 Il registro giornaliero viene salvato "
+    "automaticamente in agri_data.json"
+)
