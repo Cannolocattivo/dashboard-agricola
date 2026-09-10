@@ -15,18 +15,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Un po' di ordine visivo, senza cambiare la struttura della dashboard.
 st.markdown(
-    """
-    <style>
-        .stApp {
-            background: linear-gradient(180deg, #f6f8f5 0%, #ffffff 28%);
+   
+   <style>
+     .stApp {
+       background: linear-gradient(180deg, #f6f8f5 0%, #ffffff 28%);
         }
 
-        .block-container {
-            max-width: 1450px;
-            padding-top: 1.35rem;
-            padding-bottom: 2.5rem;
+      .block-container {
+          max-width: 1450px;
+          padding-top: 1.35rem;
+          padding-bottom: 2.5rem;
         }
 
         /* Header */
