@@ -6,10 +6,7 @@ import pydeck as pdk
 from pathlib import Path
 from datetime import datetime, timedelta
 
-
-# ============================================================
-# CONFIGURAZIONE
-# ============================================================
+# Configurazione
 
 st.set_page_config(
     page_title="AgriSmart",
@@ -417,9 +414,90 @@ FATTORE_TERRENO = {
 }
 
 
-# ============================================================
-# PERSISTENZA
-# ============================================================
+# Il servizio meteo ogni tanto può metterci qualche secondo in più.
+# Evitiamo quindi di far pesare questo problema su tutta la dashboard.
+@st.cache_data(ttl=600, show_spinner=False)
+def richiesta_meteo(url):
+    ultimo_errore = None
+
+    for _ in range(2):
+        try:
+            risposta = requests.get(url, timeout=(5, 15))
+            risposta.raise_for_status()
+            dati = risposta.json()
+
+            if not isinstance(dati, dict) or "current" not in dati:
+                raise ValueError("risposta meteo non valida")
+
+            return dati
+
+        except (requests.RequestException, ValueError) as errore:
+            ultimo_errore = errore
+
+    raise RuntimeError(f"servizio meteo non raggiungibile: {ultimo_errore}")
+
+
+def leggi_meteo(campo):
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        f"latitude={campo['lat']}&"
+        f"longitude={campo['lon']}&"
+        "current="
+        "temperature_2m,"
+        "relative_humidity_2m,"
+        "rain,"
+        "wind_speed_10m,"
+        "shortwave_radiation&"
+        "hourly=soil_moisture_3_to_9cm&"
+        "daily=rain_sum&"
+        "forecast_days=3&"
+        "timezone=auto"
+    )
+
+    try:
+        dati = richiesta_meteo(url)
+
+        # Teniamo in memoria l'ultima risposta buona, così un piccolo
+        # problema di rete non manda in tilt il monitoraggio.
+        campo["ultimo_meteo"] = {
+            "current": dati.get("current", {}),
+            "hourly": {
+                "time": dati.get("hourly", {}).get("time", []),
+                "soil_moisture_3_to_9cm": dati.get("hourly", {}).get(
+                    "soil_moisture_3_to_9cm", []
+                )
+            },
+            "daily": {
+                "rain_sum": dati.get("daily", {}).get("rain_sum", [])
+            },
+            "aggiornato": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        return dati, True, "Meteo aggiornato correttamente."
+
+    except Exception:
+        ultimo = campo.get("ultimo_meteo")
+
+        if ultimo and ultimo.get("current"):
+            quando = ultimo.get("aggiornato", "in precedenza")
+            return (
+                ultimo,
+                False,
+                f"Il servizio meteo non risponde. Sto usando l'ultima lettura valida ({quando})."
+            )
+
+        # Se non abbiamo nemmeno una lettura precedente, non inventiamo
+        # valori che potrebbero far partire un'irrigazione per errore.
+        return (
+            {
+                "current": {},
+                "hourly": {"time": [], "soil_moisture_3_to_9cm": []},
+                "daily": {"rain_sum": [0.0]}
+            },
+            False,
+            "Il servizio meteo non risponde e non ci sono ancora dati disponibili per questo campo."
+        )
+
+# Persistenza
 
 def salva_dati():
     dati = {
@@ -504,10 +582,7 @@ if "dati_caricati" not in st.session_state:
 
     st.session_state.dati_caricati = True
 
-
-# ============================================================
-# FUNZIONI REGISTRO
-# ============================================================
+# Funzioni Registro
 
 def registra_giornata(campo, dati_giorno):
     """
@@ -640,10 +715,7 @@ def salva_nuovo_campo(dati):
     salva_dati()
     st.rerun()
 
-
-# ============================================================
-# SIDEBAR
-# ============================================================
+# Pannello laterale
 
 st.sidebar.header("⚙️ Opzioni")
 
@@ -754,10 +826,7 @@ if st.sidebar.button("💾 Salva dati"):
     salva_dati()
     st.sidebar.success("Dati salvati.")
 
-
-# ============================================================
-# TABS
-# ============================================================
+# Schede principali
 
 t_mon, t_map, t_arc = st.tabs([
     "📊 Monitoraggio",
@@ -765,10 +834,7 @@ t_mon, t_map, t_arc = st.tabs([
     "🗄️ Archivio"
 ])
 
-
-# ============================================================
-# MONITORAGGIO
-# ============================================================
+# Monitoraggio dei campi
 
 with t_mon:
 
@@ -814,469 +880,384 @@ with t_mon:
                     )
                     st.session_state.pop("irrigazione_forzata_confermata", None)
 
-                # ====================================================
-                # DATI METEO
+# Dati Meteo
+
+                meteo, meteo_aggiornato, meteo_nota = leggi_meteo(campo)
+
+                cur = meteo.get("current", {})
+                temp = cur.get("temperature_2m", 0.0)
+                umid = cur.get("relative_humidity_2m", 0.0)
+                piog = cur.get("rain", 0.0)
+                vent = cur.get("wind_speed_10m", 0.0)
+                rads = cur.get("shortwave_radiation", 0.0)
+
+                hrs = meteo.get("hourly", {})
+                l_soil = hrs.get("soil_moisture_3_to_9cm", [])
+                l_val = [v for v in l_soil if v is not None]
+                soil = l_val[-1] if l_val else None
+
+                dly = meteo.get("daily", {})
+                p_prev = dly.get("rain_sum", [0.0])
+                p_dom = p_prev[0] if p_prev else 0.0
+
+                st.write("### 🌤️ Condizioni attuali")
+                if meteo_aggiornato:
+                    st.caption("Meteo aggiornato correttamente.")
+                else:
+                    st.warning(meteo_nota)
+
+                meteo_pronto = bool(meteo_aggiornato or campo.get("ultimo_meteo"))
+                if soil is None:
+                    meteo_pronto = False
+                    soil = 0.0
+
+                # RIEPILOGO
                 # ====================================================
 
-                url = (
-                    "https://api.open-meteo.com/v1/forecast?"
-                    f"latitude={campo['lat']}&"
-                    f"longitude={campo['lon']}&"
-                    "current="
-                    "temperature_2m,"
-                    "relative_humidity_2m,"
-                    "rain,"
-                    "wind_speed_10m,"
-                    "shortwave_radiation&"
-                    "hourly=soil_moisture_3_to_9cm&"
-                    "daily=rain_sum&"
-                    "forecast_days=3&"
-                    "timezone=auto"
+                st.write("### 🌤️ Condizioni attuali")
+
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+                c1.metric(
+                    "Temp. Aria",
+                    f"{temp:.1f} °C"
                 )
 
-                try:
+                c2.metric(
+                    "Umidità Aria",
+                    f"{umid:.0f} %"
+                )
 
-                    res = requests.get(
-                        url,
-                        timeout=10
-                    ).json()
+                c3.metric(
+                    "Pioggia",
+                    f"{piog:.1f} mm"
+                )
 
-                    cur = res.get(
-                        "current",
-                        {}
+                c4.metric(
+                    "Vento",
+                    f"{vent:.1f} km/h"
+                )
+
+                c5.metric(
+                    "Radiazione",
+                    f"{rads:.0f} W/m²"
+                )
+
+                c6.metric(
+                    "Umidità Suolo",
+                    f"{soil:.3f}"
+                )
+
+# Calcolo Irrigazione
+
+                oggi = datetime.now().strftime("%Y-%m-%d")
+                g_irr = datetime.now().strftime("%d/%m/%Y")
+                ora_rilevazione = datetime.now().strftime("%H:%M:%S")
+
+                # Ogni coltivazione viene calcolata separatamente.
+                # Il campo però ha un solo impianto: se le coltivazioni
+                # vengono irrigate insieme, il tempo di funzionamento
+                # necessario è quello della coltivazione che richiede più acqua.
+                fattore_terreno = FATTORE_TERRENO.get(terreno, 1.0)
+                calcoli_irr = []
+
+                for coltura in coltivazioni:
+                    info = DIZIONARIO[coltura]
+                    fabb = info["fabbisogno"] * fattore_terreno
+                    sogl = info["soglia_umidita"]
+                    intg = max(0.0, fabb - piog)
+
+                    if piog >= fabb or p_dom >= fabb:
+                        stato_colt = "🚫 Sospesa"
+                        acqua = 0.0
+                    elif soil < sogl:
+                        stato_colt = "💧 Attiva"
+                        acqua = intg
+                    else:
+                        stato_colt = "✅ Sospesa"
+                        acqua = 0.0
+
+                    minuti = (acqua / campo["portata"]) * 60 if campo["portata"] > 0 else 0
+                    calcoli_irr.append({
+                        "coltura": coltura,
+                        "fabbisogno": fabb,
+                        "soglia": sogl,
+                        "stato": stato_colt,
+                        "acqua": acqua,
+                        "minuti": minuti,
+                        "maturazione": info["giorni_maturazione"]
+                    })
+
+                # Irrigazione contemporanea: un solo impianto alimenta
+                # tutte le coltivazioni del campo, quindi non sommiamo
+                # i minuti delle colture (evitando di irrigare due volte).
+                attive = [x for x in calcoli_irr if x["stato"] == "💧 Attiva"]
+                if not meteo_pronto:
+                    attive = []
+                a_smr = max((x["acqua"] for x in attive), default=0.0)
+                minuti_irr = max((x["minuti"] for x in attive), default=0.0)
+
+                if not meteo_pronto:
+                    s_irr = "⚠️ In attesa del meteo"
+                elif attive:
+                    s_irr = "💧 Attiva"
+                else:
+                    s_irr = "🚫 Sospesa"
+
+                o_fin = (
+                    datetime.strptime("06:00", "%H:%M")
+                    + timedelta(minutes=int(minuti_irr))
+                ).strftime("%H:%M")
+
+                risp = max(
+                    0.0,
+                    max((x["fabbisogno"] for x in calcoli_irr), default=0.0) - a_smr
+                )
+
+                st.write("### 🌱 Irrigazione per coltivazione")
+                df_irr = pd.DataFrame([
+                    {
+                        "Coltivazione": x["coltura"],
+                        "Terreno": terreno,
+                        "Fabbisogno": f"{x['fabbisogno']:.1f} mm",
+                        "Soglia suolo": f"{x['soglia']:.3f}",
+                        "Stato": x["stato"],
+                        "Acqua necessaria": f"{x['acqua']:.1f} mm",
+                        "Tempo": f"{x['minuti']:.0f} min"
+                    }
+                    for x in calcoli_irr
+                ])
+                st.dataframe(
+                    df_irr,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                st.caption(
+                    f"Terreno: {terreno}. Con un unico impianto le coltivazioni "
+                    f"vengono gestite insieme: il tempo impostato è quello "
+                    f"della richiesta maggiore ({minuti_irr:.0f} minuti)."
+                )
+
+# Irrigazione Forzata
+
+                st.write("#### 💧 Comando irrigazione")
+
+                forza_key = f"forza_attiva_{idx}"
+                durata_key = f"durata_forza_{idx}"
+
+                if st.button(
+                    "💧 Forza irrigazione del campo",
+                    key=f"forza_irr_{idx}",
+                    use_container_width=False
+                ):
+                    st.session_state[forza_key] = True
+                    st.session_state.pop("irrigazione_forzata_confermata", None)
+                    st.rerun()
+
+                if st.session_state.get(forza_key, False):
+                    st.warning(
+                        f"Stai per irrigare manualmente **{campo['nome']}**. "
+                        "Indica la durata e conferma l'intervento."
                     )
 
-                    temp = cur.get(
-                        "temperature_2m",
-                        20.0
+                    minuti_forzati = st.number_input(
+                        "Durata irrigazione (minuti)",
+                        min_value=1,
+                        max_value=1440,
+                        value=30,
+                        step=5,
+                        key=durata_key
                     )
 
-                    umid = cur.get(
-                        "relative_humidity_2m",
-                        50
-                    )
-
-                    piog = cur.get(
-                        "rain",
-                        0.0
-                    )
-
-                    vent = cur.get(
-                        "wind_speed_10m",
-                        0.0
-                    )
-
-                    rads = cur.get(
-                        "shortwave_radiation",
-                        0.0
-                    )
-
-                    # ====================================================
-                    # UMIDITÀ SUOLO
-                    # ====================================================
-
-                    hrs = res.get(
-                        "hourly",
-                        {}
-                    )
-
-                    l_soil = hrs.get(
-                        "soil_moisture_3_to_9cm",
-                        []
-                    )
-
-                    l_val = [
-                        v
-                        for v in l_soil
-                        if v is not None
-                    ]
-
-                    soil = (
-                        l_val[-1]
-                        if l_val
-                        else 0.22
-                    )
-
-                    # ====================================================
-                    # PIOGGIA GIORNALIERA
-                    # ====================================================
-
-                    dly = res.get(
-                        "daily",
-                        {}
-                    )
-
-                    p_prev = dly.get(
-                        "rain_sum",
-                        [0.0, 0.0, 0.0]
-                    )
-
-                    p_dom = (
-                        p_prev[0]
-                        if p_prev
+                    acqua_forzata = (
+                        campo["portata"] * minuti_forzati / 60
+                        if campo.get("portata", 0) > 0
                         else 0.0
                     )
-
-                    # ====================================================
-                    # RIEPILOGO
-                    # ====================================================
-
-                    st.write("### 🌤️ Condizioni attuali")
-
-                    c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-                    c1.metric(
-                        "Temp. Aria",
-                        f"{temp:.1f} °C"
-                    )
-
-                    c2.metric(
-                        "Umidità Aria",
-                        f"{umid:.0f} %"
-                    )
-
-                    c3.metric(
-                        "Pioggia",
-                        f"{piog:.1f} mm"
-                    )
-
-                    c4.metric(
-                        "Vento",
-                        f"{vent:.1f} km/h"
-                    )
-
-                    c5.metric(
-                        "Radiazione",
-                        f"{rads:.0f} W/m²"
-                    )
-
-                    c6.metric(
-                        "Umidità Suolo",
-                        f"{soil:.3f}"
-                    )
-
-                    # ====================================================
-                    # CALCOLO IRRIGAZIONE
-                    # ====================================================
-
-                    oggi = datetime.now().strftime("%Y-%m-%d")
-                    g_irr = datetime.now().strftime("%d/%m/%Y")
-                    ora_rilevazione = datetime.now().strftime("%H:%M:%S")
-
-                    # Ogni coltivazione viene calcolata separatamente.
-                    # Il campo però ha un solo impianto: se le coltivazioni
-                    # vengono irrigate insieme, il tempo di funzionamento
-                    # necessario è quello della coltivazione che richiede più acqua.
-                    fattore_terreno = FATTORE_TERRENO.get(terreno, 1.0)
-                    calcoli_irr = []
-
-                    for coltura in coltivazioni:
-                        info = DIZIONARIO[coltura]
-                        fabb = info["fabbisogno"] * fattore_terreno
-                        sogl = info["soglia_umidita"]
-                        intg = max(0.0, fabb - piog)
-
-                        if piog >= fabb or p_dom >= fabb:
-                            stato_colt = "🚫 Sospesa"
-                            acqua = 0.0
-                        elif soil < sogl:
-                            stato_colt = "💧 Attiva"
-                            acqua = intg
-                        else:
-                            stato_colt = "✅ Sospesa"
-                            acqua = 0.0
-
-                        minuti = (acqua / campo["portata"]) * 60 if campo["portata"] > 0 else 0
-                        calcoli_irr.append({
-                            "coltura": coltura,
-                            "fabbisogno": fabb,
-                            "soglia": sogl,
-                            "stato": stato_colt,
-                            "acqua": acqua,
-                            "minuti": minuti,
-                            "maturazione": info["giorni_maturazione"]
-                        })
-
-                    # Irrigazione contemporanea: un solo impianto alimenta
-                    # tutte le coltivazioni del campo, quindi non sommiamo
-                    # i minuti delle colture (evitando di irrigare due volte).
-                    attive = [x for x in calcoli_irr if x["stato"] == "💧 Attiva"]
-                    a_smr = max((x["acqua"] for x in attive), default=0.0)
-                    minuti_irr = max((x["minuti"] for x in attive), default=0.0)
-
-                    if attive:
-                        s_irr = "💧 Attiva"
-                    else:
-                        s_irr = "🚫 Sospesa"
-
-                    o_fin = (
-                        datetime.strptime("06:00", "%H:%M")
-                        + timedelta(minutes=int(minuti_irr))
+                    ora_inizio_forzata = datetime.now()
+                    fine_forzata = (
+                        ora_inizio_forzata
+                        + timedelta(minutes=int(minuti_forzati))
                     ).strftime("%H:%M")
 
-                    risp = max(
-                        0.0,
-                        max((x["fabbisogno"] for x in calcoli_irr), default=0.0) - a_smr
-                    )
-
-                    st.write("### 🌱 Irrigazione per coltivazione")
-                    df_irr = pd.DataFrame([
-                        {
-                            "Coltivazione": x["coltura"],
-                            "Terreno": terreno,
-                            "Fabbisogno": f"{x['fabbisogno']:.1f} mm",
-                            "Soglia suolo": f"{x['soglia']:.3f}",
-                            "Stato": x["stato"],
-                            "Acqua necessaria": f"{x['acqua']:.1f} mm",
-                            "Tempo": f"{x['minuti']:.0f} min"
-                        }
-                        for x in calcoli_irr
-                    ])
-                    st.dataframe(
-                        df_irr,
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
                     st.caption(
-                        f"Terreno: {terreno}. Con un unico impianto le coltivazioni "
-                        f"vengono gestite insieme: il tempo impostato è quello "
-                        f"della richiesta maggiore ({minuti_irr:.0f} minuti)."
+                        f"Durata scelta: **{minuti_forzati:.0f} minuti** · "
+                        f"Acqua stimata: **{acqua_forzata:.1f} mm** · "
+                        f"Fine prevista: **{fine_forzata}**"
                     )
 
-                    # ====================================================
-                    # IRRIGAZIONE FORZATA
-                    # ====================================================
+                    c_forza1, c_forza2 = st.columns(2)
 
-                    st.write("#### 💧 Comando irrigazione")
+                    with c_forza1:
+                        conferma_forzatura = st.button(
+                            "Conferma irrigazione",
+                            key=f"conferma_forza_{idx}",
+                            type="primary",
+                            use_container_width=True
+                        )
 
-                    forza_key = f"forza_attiva_{idx}"
-                    durata_key = f"durata_forza_{idx}"
+                    with c_forza2:
+                        annulla_forzatura = st.button(
+                            "Annulla",
+                            key=f"annulla_forza_{idx}",
+                            use_container_width=True
+                        )
 
-                    if st.button(
-                        "💧 Forza irrigazione del campo",
-                        key=f"forza_irr_{idx}",
-                        use_container_width=False
-                    ):
-                        st.session_state[forza_key] = True
-                        st.session_state.pop("irrigazione_forzata_confermata", None)
+                    if annulla_forzatura:
+                        st.session_state.pop(forza_key, None)
+                        st.session_state.pop(durata_key, None)
                         st.rerun()
 
-                    if st.session_state.get(forza_key, False):
-                        st.warning(
-                            f"Stai per irrigare manualmente **{campo['nome']}**. "
-                            "Indica la durata e conferma l'intervento."
-                        )
-
-                        minuti_forzati = st.number_input(
-                            "Durata irrigazione (minuti)",
-                            min_value=1,
-                            max_value=1440,
-                            value=30,
-                            step=5,
-                            key=durata_key
-                        )
-
+                    if conferma_forzatura:
+                        ora_forzatura = datetime.now()
+                        minuti_forzati = float(st.session_state.get(durata_key, minuti_forzati))
                         acqua_forzata = (
                             campo["portata"] * minuti_forzati / 60
                             if campo.get("portata", 0) > 0
                             else 0.0
                         )
-                        ora_inizio_forzata = datetime.now()
                         fine_forzata = (
-                            ora_inizio_forzata
+                            ora_forzatura
                             + timedelta(minutes=int(minuti_forzati))
                         ).strftime("%H:%M")
 
-                        st.caption(
-                            f"Durata scelta: **{minuti_forzati:.0f} minuti** · "
-                            f"Acqua stimata: **{acqua_forzata:.1f} mm** · "
-                            f"Fine prevista: **{fine_forzata}**"
-                        )
+                        evento_forzatura = {
+                            "campo": campo["nome"],
+                            "coltivazioni": list(coltivazioni),
+                            "terreno": terreno,
+                            "data": ora_forzatura.strftime("%Y-%m-%d"),
+                            "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
+                            "stato": "💧 IRRIGAZIONE FORZATA",
+                            "tipo_evento": "irrigazione_forzata",
+                            "confermata": True,
+                            "temperatura": round(temp, 1),
+                            "umidita_aria": round(umid, 1),
+                            "pioggia": round(piog, 1),
+                            "vento": round(vent, 1),
+                            "radiazione": round(rads, 1),
+                            "umidita_suolo": round(soil, 3),
+                            "pioggia_giornaliera": round(p_dom, 1),
+                            "inizio": ora_forzatura.strftime("%H:%M"),
+                            "fine": fine_forzata,
+                            "erogata": round(acqua_forzata, 1),
+                            "risparmiata": 0.0,
+                            "minuti_irrigazione": round(minuti_forzati, 1),
+                            "coltivazioni_calcolate": calcoli_irr
+                        }
 
-                        c_forza1, c_forza2 = st.columns(2)
+                        registra_evento(campo, evento_forzatura)
+                        salva_dati()
 
-                        with c_forza1:
-                            conferma_forzatura = st.button(
-                                "Conferma irrigazione",
-                                key=f"conferma_forza_{idx}",
-                                type="primary",
-                                use_container_width=True
-                            )
+                        # Pulizia immediata dello stato della richiesta.
+                        # Non usiamo un flag di conferma persistente: dopo il rerun
+                        # la finestra di autorizzazione non viene ricreata.
+                        st.session_state.pop(forza_key, None)
+                        st.session_state.pop(durata_key, None)
+                        st.session_state["irrigazione_forzata_confermata"] = {
+                            "campo": campo["nome"],
+                            "minuti": minuti_forzati,
+                            "timestamp": ora_forzatura.strftime("%H:%M:%S")
+                        }
+                        st.rerun()
 
-                        with c_forza2:
-                            annulla_forzatura = st.button(
-                                "Annulla",
-                                key=f"annulla_forza_{idx}",
-                                use_container_width=True
-                            )
+# Registrazione Automatica Giornaliera
 
-                        if annulla_forzatura:
-                            st.session_state.pop(forza_key, None)
-                            st.session_state.pop(durata_key, None)
-                            st.rerun()
+                dati_giorno = {
+                    "campo": campo["nome"],
+                    "coltivazioni": list(coltivazioni),
+                    "terreno": terreno,
+                    "tipo_evento": "giornaliero",
+                    "data": oggi,
+                    "ora_rilevazione": ora_rilevazione,
+                    "stato": s_irr,
+                    "temperatura": temp,
+                    "umidita_aria": umid,
+                    "pioggia": piog,
+                    "vento": vent,
+                    "radiazione": rads,
+                    "umidita_suolo": soil,
+                    "pioggia_giornaliera": p_dom,
+                    "inizio": "06:00",
+                    "fine": o_fin,
+                    "erogata": a_smr,
+                    "risparmiata": risp
+                }
 
-                        if conferma_forzatura:
-                            ora_forzatura = datetime.now()
-                            minuti_forzati = float(st.session_state.get(durata_key, minuti_forzati))
-                            acqua_forzata = (
-                                campo["portata"] * minuti_forzati / 60
-                                if campo.get("portata", 0) > 0
-                                else 0.0
-                            )
-                            fine_forzata = (
-                                ora_forzatura
-                                + timedelta(minutes=int(minuti_forzati))
-                            ).strftime("%H:%M")
-
-                            evento_forzatura = {
-                                "campo": campo["nome"],
-                                "coltivazioni": list(coltivazioni),
-                                "terreno": terreno,
-                                "data": ora_forzatura.strftime("%Y-%m-%d"),
-                                "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
-                                "stato": "💧 IRRIGAZIONE FORZATA",
-                                "tipo_evento": "irrigazione_forzata",
-                                "confermata": True,
-                                "temperatura": round(temp, 1),
-                                "umidita_aria": round(umid, 1),
-                                "pioggia": round(piog, 1),
-                                "vento": round(vent, 1),
-                                "radiazione": round(rads, 1),
-                                "umidita_suolo": round(soil, 3),
-                                "pioggia_giornaliera": round(p_dom, 1),
-                                "inizio": ora_forzatura.strftime("%H:%M"),
-                                "fine": fine_forzata,
-                                "erogata": round(acqua_forzata, 1),
-                                "risparmiata": 0.0,
-                                "minuti_irrigazione": round(minuti_forzati, 1),
-                                "coltivazioni_calcolate": calcoli_irr
-                            }
-
-                            registra_evento(campo, evento_forzatura)
-                            salva_dati()
-
-                            # Pulizia immediata dello stato della richiesta.
-                            # Non usiamo un flag di conferma persistente: dopo il rerun
-                            # la finestra di autorizzazione non viene ricreata.
-                            st.session_state.pop(forza_key, None)
-                            st.session_state.pop(durata_key, None)
-                            st.session_state["irrigazione_forzata_confermata"] = {
-                                "campo": campo["nome"],
-                                "minuti": minuti_forzati,
-                                "timestamp": ora_forzatura.strftime("%H:%M:%S")
-                            }
-                            st.rerun()
-
-                    # ====================================================
-                    # REGISTRAZIONE AUTOMATICA GIORNALIERA
-                    # ====================================================
-
-                    dati_giorno = {
-                        "campo": campo["nome"],
-                        "coltivazioni": list(coltivazioni),
-                        "terreno": terreno,
-                        "tipo_evento": "giornaliero",
-                        "data": oggi,
-                        "ora_rilevazione": ora_rilevazione,
-                        "stato": s_irr,
-                        "temperatura": temp,
-                        "umidita_aria": umid,
-                        "pioggia": piog,
-                        "vento": vent,
-                        "radiazione": rads,
-                        "umidita_suolo": soil,
-                        "pioggia_giornaliera": p_dom,
-                        "inizio": "06:00",
-                        "fine": o_fin,
-                        "erogata": a_smr,
-                        "risparmiata": risp
-                    }
-
-                    registra_giornata(
+                registra_giornata(
+                    campo,
+                    dati_registro(
                         campo,
-                        dati_registro(
-                            campo,
-                            dati_giorno
-                        )
+                        dati_giorno
                     )
+                )
 
-                    # Salvataggio automatico.
-                    # La stessa data viene aggiornata e non duplicata.
-                    salva_dati()
+                # Salvataggio automatico.
+                # La stessa data viene aggiornata e non duplicata.
+                salva_dati()
 
-                    # ====================================================
-                    # PARAMETRI D'INTERVENTO GIORNALIERI
-                    # ====================================================
+# Parametri D'Intervento Giornalieri
 
-                    st.write(
-                        "### 📋 Parametri d'Intervento Giornalieri"
-                    )
+                st.write(
+                    "### 📋 Parametri d'Intervento Giornalieri"
+                )
 
-                    righe_intervento = [{
-                        "Campo": campo["nome"],
-                        "Coltivazioni": ", ".join(coltivazioni),
-                        "Terreno": terreno,
-                        "Tipo": "Automatico",
-                        "Stato": s_irr,
-                        "Giorno": g_irr,
-                        "Temp. Aria": f"{temp:.1f} °C",
-                        "Umidità Aria": f"{umid:.0f} %",
-                        "Pioggia": f"{piog:.1f} mm",
-                        "Vento": f"{vent:.1f} km/h",
-                        "Radiazione Solare": f"{rads:.0f} W/m²",
-                        "Umidità Suolo": f"{soil:.3f}",
-                        "Pioggia Giorno": f"{p_dom:.1f} mm",
-                        "Inizio": "06:00",
-                        "Fine": o_fin,
-                        "Erogata": f"{a_smr:.1f} mm",
-                        "Durata": f"{minuti_irr:.0f} min",
-                        "Risparmiata": f"{risp:.1f} mm"
-                    }]
+                righe_intervento = [{
+                    "Campo": campo["nome"],
+                    "Coltivazioni": ", ".join(coltivazioni),
+                    "Terreno": terreno,
+                    "Tipo": "Automatico",
+                    "Stato": s_irr,
+                    "Giorno": g_irr,
+                    "Temp. Aria": f"{temp:.1f} °C",
+                    "Umidità Aria": f"{umid:.0f} %",
+                    "Pioggia": f"{piog:.1f} mm",
+                    "Vento": f"{vent:.1f} km/h",
+                    "Radiazione Solare": f"{rads:.0f} W/m²",
+                    "Umidità Suolo": f"{soil:.3f}",
+                    "Pioggia Giorno": f"{p_dom:.1f} mm",
+                    "Inizio": "06:00",
+                    "Fine": o_fin,
+                    "Erogata": f"{a_smr:.1f} mm",
+                    "Durata": f"{minuti_irr:.0f} min",
+                    "Risparmiata": f"{risp:.1f} mm"
+                }]
 
-                    # Le irrigazioni forzate sono eventi indipendenti dalla riga
-                    # giornaliera: vengono mostrate qui e restano nello storico.
-                    for evento in campo.get("registro", []):
-                        if (
-                            evento.get("data") == oggi
-                            and evento.get("tipo_evento") == "irrigazione_forzata"
-                            and evento.get("confermata") is True
-                        ):
-                            righe_intervento.append({
-                                "Campo": evento.get("campo", campo["nome"]),
-                                "Coltivazioni": ", ".join(evento.get("coltivazioni", coltivazioni)),
-                                "Terreno": evento.get("terreno", terreno),
-                                "Tipo": "Forzatura manuale",
-                                "Stato": evento.get("stato", "💧 IRRIGAZIONE FORZATA"),
-                                "Giorno": datetime.strptime(evento["data"], "%Y-%m-%d").strftime("%d/%m/%Y"),
-                                "_ora_evento": evento.get("ora_rilevazione", "00:00:00"),
-                                "Temp. Aria": f"{evento.get('temperatura', 0):.1f} °C",
-                                "Umidità Aria": f"{evento.get('umidita_aria', 0):.0f} %",
-                                "Pioggia": f"{evento.get('pioggia', 0):.1f} mm",
-                                "Vento": f"{evento.get('vento', 0):.1f} km/h",
-                                "Radiazione Solare": f"{evento.get('radiazione', 0):.0f} W/m²",
-                                "Umidità Suolo": f"{evento.get('umidita_suolo', 0):.3f}",
-                                "Pioggia Giorno": f"{evento.get('pioggia_giornaliera', 0):.1f} mm",
-                                "Inizio": evento.get("inizio", ""),
-                                "Fine": evento.get("fine", ""),
-                                "Erogata": f"{evento.get('erogata', 0):.1f} mm",
-                                "Durata": f"{evento.get('minuti_irrigazione', 0):.0f} min",
-                                "Risparmiata": "0.0 mm"
-                            })
+                # Le irrigazioni forzate sono eventi indipendenti dalla riga
+                # giornaliera: vengono mostrate qui e restano nello storico.
+                for evento in campo.get("registro", []):
+                    if (
+                        evento.get("data") == oggi
+                        and evento.get("tipo_evento") == "irrigazione_forzata"
+                        and evento.get("confermata") is True
+                    ):
+                        righe_intervento.append({
+                            "Campo": evento.get("campo", campo["nome"]),
+                            "Coltivazioni": ", ".join(evento.get("coltivazioni", coltivazioni)),
+                            "Terreno": evento.get("terreno", terreno),
+                            "Tipo": "Forzatura manuale",
+                            "Stato": evento.get("stato", "💧 IRRIGAZIONE FORZATA"),
+                            "Giorno": datetime.strptime(evento["data"], "%Y-%m-%d").strftime("%d/%m/%Y"),
+                            "_ora_evento": evento.get("ora_rilevazione", "00:00:00"),
+                            "Temp. Aria": f"{evento.get('temperatura', 0):.1f} °C",
+                            "Umidità Aria": f"{evento.get('umidita_aria', 0):.0f} %",
+                            "Pioggia": f"{evento.get('pioggia', 0):.1f} mm",
+                            "Vento": f"{evento.get('vento', 0):.1f} km/h",
+                            "Radiazione Solare": f"{evento.get('radiazione', 0):.0f} W/m²",
+                            "Umidità Suolo": f"{evento.get('umidita_suolo', 0):.3f}",
+                            "Pioggia Giorno": f"{evento.get('pioggia_giornaliera', 0):.1f} mm",
+                            "Inizio": evento.get("inizio", ""),
+                            "Fine": evento.get("fine", ""),
+                            "Erogata": f"{evento.get('erogata', 0):.1f} mm",
+                            "Durata": f"{evento.get('minuti_irrigazione', 0):.0f} min",
+                            "Risparmiata": "0.0 mm"
+                        })
 
-                    # Mettiamo sempre l'evento più recente in alto.
-                    # Per la riga automatica usiamo l'orario di rilevazione;
-                    # per le forzature usiamo l'orario in cui sono state autorizzate.
-                    def _ordine_intervento(riga):
-                        if riga.get("Tipo") == "Forzatura manuale":
-                            try:
-                                return datetime.strptime(
-                                    riga.get("Giorno", "01/01/1970") + " " + riga.get("_ora_evento", "00:00:00"),
-                                    "%d/%m/%Y %H:%M:%S"
-                                )
-                            except ValueError:
-                                return datetime.min
-
+                # Mettiamo sempre l'evento più recente in alto.
+                # Per la riga automatica usiamo l'orario di rilevazione;
+                # per le forzature usiamo l'orario in cui sono state autorizzate.
+                def _ordine_intervento(riga):
+                    if riga.get("Tipo") == "Forzatura manuale":
                         try:
                             return datetime.strptime(
                                 riga.get("Giorno", "01/01/1970") + " " + riga.get("_ora_evento", "00:00:00"),
@@ -1285,213 +1266,204 @@ with t_mon:
                         except ValueError:
                             return datetime.min
 
-                    righe_intervento[0]["_ora_evento"] = ora_rilevazione
+                    try:
+                        return datetime.strptime(
+                            riga.get("Giorno", "01/01/1970") + " " + riga.get("_ora_evento", "00:00:00"),
+                            "%d/%m/%Y %H:%M:%S"
+                        )
+                    except ValueError:
+                        return datetime.min
 
-                    for riga in righe_intervento[1:]:
-                        if not riga.get("_ora_evento"):
-                            riga["_ora_evento"] = "00:00:00"
+                righe_intervento[0]["_ora_evento"] = ora_rilevazione
 
-                    righe_intervento.sort(key=_ordine_intervento, reverse=True)
+                for riga in righe_intervento[1:]:
+                    if not riga.get("_ora_evento"):
+                        riga["_ora_evento"] = "00:00:00"
 
-                    for riga in righe_intervento:
-                        riga.pop("_ora_evento", None)
+                righe_intervento.sort(key=_ordine_intervento, reverse=True)
 
-                    df_oggi = pd.DataFrame(righe_intervento)
+                for riga in righe_intervento:
+                    riga.pop("_ora_evento", None)
 
-                    st.dataframe(
-                        df_oggi,
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                df_oggi = pd.DataFrame(righe_intervento)
 
-                    # ====================================================
-                    # REGISTRO CRONOLOGICO DEL CAMPO
-                    # ====================================================
+                st.dataframe(
+                    df_oggi,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+# Registro Cronologico Del Campo
+
+                st.write(
+                    "### 📚 Registro cronologico del campo"
+                )
+
+                mostra_registro(campo)
+
+# Grafico Umidità Suolo
+
+                if (
+                    l_soil
+                    and hrs.get("time")
+                ):
+
+                    df_g = pd.DataFrame({
+                        "Ora": pd.to_datetime(
+                            hrs["time"]
+                        ),
+                        "Umidità": l_soil
+                    }).set_index("Ora")
 
                     st.write(
-                        "### 📚 Registro cronologico del campo"
+                        "#### 📈 Umidità del suolo"
                     )
 
-                    mostra_registro(campo)
-
-                    # ====================================================
-                    # GRAFICO UMIDITÀ SUOLO
-                    # ====================================================
-
-                    if (
-                        l_soil
-                        and hrs.get("time")
-                    ):
-
-                        df_g = pd.DataFrame({
-                            "Ora": pd.to_datetime(
-                                hrs["time"]
-                            ),
-                            "Umidità": l_soil
-                        }).set_index("Ora")
-
-                        st.write(
-                            "#### 📈 Umidità del suolo"
-                        )
-
-                        st.line_chart(
-                            df_g,
-                            height=150
-                        )
-
-                    # ====================================================
-                    # PREVISIONE RACCOLTA
-                    # ====================================================
-
-                    d_sem = datetime.strptime(
-                        campo["data_semina"],
-                        "%Y-%m-%d"
+                    st.line_chart(
+                        df_g,
+                        height=150
                     )
 
-                    g_pass = (
-                        datetime.now() -
-                        d_sem
-                    ).days
+# Previsione Raccolta
 
-                    corr = 0
+                d_sem = datetime.strptime(
+                    campo["data_semina"],
+                    "%Y-%m-%d"
+                )
 
-                    if temp > 28.0:
-                        corr = -4
+                g_pass = (
+                    datetime.now() -
+                    d_sem
+                ).days
 
-                    if temp < 12.0:
-                        corr = 6
+                corr = 0
 
-                    previsione = []
-                    for calcolo in calcoli_irr:
-                        g_rim = max(
-                            0,
-                            (calcolo["maturazione"] - g_pass) + corr
+                if temp > 28.0:
+                    corr = -4
+
+                if temp < 12.0:
+                    corr = 6
+
+                previsione = []
+                for calcolo in calcoli_irr:
+                    g_rim = max(
+                        0,
+                        (calcolo["maturazione"] - g_pass) + corr
+                    )
+                    d_rac = (
+                        datetime.now() +
+                        timedelta(days=g_rim)
+                    ).strftime("%d/%m/%Y")
+                    previsione.append({
+                        "Coltivazione": calcolo["coltura"],
+                        "Giorni rimasti": g_rim,
+                        "Data stimata": d_rac
+                    })
+
+                st.write("### 🌾 Previsione raccolta")
+                st.dataframe(
+                    pd.DataFrame(previsione),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+# Chiusura Campo
+
+                with st.form(
+                    f"f_ch_{idx}"
+                ):
+
+                    st.write("🏁 Chiusura")
+
+                    cx1, cx2 = st.columns(2)
+
+                    with cx1:
+
+                        q_rac = st.number_input(
+                            "Quintali *",
+                            min_value=0.1,
+                            step=0.1,
+                            key=f"q_{idx}"
                         )
-                        d_rac = (
-                            datetime.now() +
-                            timedelta(days=g_rim)
-                        ).strftime("%d/%m/%Y")
-                        previsione.append({
-                            "Coltivazione": calcolo["coltura"],
-                            "Giorni rimasti": g_rim,
-                            "Data stimata": d_rac
-                        })
 
-                    st.write("### 🌾 Previsione raccolta")
-                    st.dataframe(
-                        pd.DataFrame(previsione),
-                        use_container_width=True,
-                        hide_index=True
+                    with cx2:
+
+                        n_rac = st.text_input(
+                            "Note",
+                            key=f"n_{idx}"
+                        )
+
+                    btn = st.form_submit_button(
+                        "🎉 Salva"
                     )
 
-                    # ====================================================
-                    # CHIUSURA CAMPO
-                    # ====================================================
+                    if btn:
 
-                    with st.form(
-                        f"f_ch_{idx}"
-                    ):
-
-                        st.write("🏁 Chiusura")
-
-                        cx1, cx2 = st.columns(2)
-
-                        with cx1:
-
-                            q_rac = st.number_input(
-                                "Quintali *",
-                                min_value=0.1,
-                                step=0.1,
-                                key=f"q_{idx}"
+                        campo["data_raccolto"] = (
+                            datetime.now().strftime(
+                                "%d/%m/%Y"
                             )
-
-                        with cx2:
-
-                            n_rac = st.text_input(
-                                "Note",
-                                key=f"n_{idx}"
-                            )
-
-                        btn = st.form_submit_button(
-                            "🎉 Salva"
                         )
 
-                        if btn:
+                        campo["quintali"] = q_rac
 
-                            campo["data_raccolto"] = (
+                        campo["note"] = (
+                            n_rac
+                            if n_rac
+                            else "Standard"
+                        )
+
+                        # Salviamo nel registro anche l'evento
+                        # di raccolta, mantenendo la cronologia.
+                        campo.setdefault(
+                            "registro",
+                            []
+                        ).append({
+                            "data": oggi,
+                            "ora_rilevazione": (
                                 datetime.now().strftime(
-                                    "%d/%m/%Y"
+                                    "%H:%M:%S"
                                 )
-                            )
-
-                            campo["quintali"] = q_rac
-
-                            campo["note"] = (
+                            ),
+                            "stato": "🎉 RACCOLTA",
+                            "temperatura": temp,
+                            "umidita_aria": umid,
+                            "pioggia": piog,
+                            "vento": vent,
+                            "radiazione": rads,
+                            "umidita_suolo": soil,
+                            "pioggia_giornaliera": p_dom,
+                            "inizio": "",
+                            "fine": "",
+                            "erogata": 0.0,
+                            "risparmiata": 0.0,
+                            "quintali": q_rac,
+                            "note": (
                                 n_rac
                                 if n_rac
                                 else "Standard"
                             )
+                        })
 
-                            # Salviamo nel registro anche l'evento
-                            # di raccolta, mantenendo la cronologia.
-                            campo.setdefault(
-                                "registro",
-                                []
-                            ).append({
-                                "data": oggi,
-                                "ora_rilevazione": (
-                                    datetime.now().strftime(
-                                        "%H:%M:%S"
-                                    )
-                                ),
-                                "stato": "🎉 RACCOLTA",
-                                "temperatura": temp,
-                                "umidita_aria": umid,
-                                "pioggia": piog,
-                                "vento": vent,
-                                "radiazione": rads,
-                                "umidita_suolo": soil,
-                                "pioggia_giornaliera": p_dom,
-                                "inizio": "",
-                                "fine": "",
-                                "erogata": 0.0,
-                                "risparmiata": 0.0,
-                                "quintali": q_rac,
-                                "note": (
-                                    n_rac
-                                    if n_rac
-                                    else "Standard"
-                                )
-                            })
+                        # Il campo raccolto passa nello storico
+                        # mantenendo TUTTO il registro.
+                        st.session_state.archivio.append(
+                            campo.copy()
+                        )
 
-                            # Il campo raccolto passa nello storico
-                            # mantenendo TUTTO il registro.
-                            st.session_state.archivio.append(
-                                campo.copy()
-                            )
+                        st.session_state.campi.pop(
+                            idx
+                        )
 
-                            st.session_state.campi.pop(
-                                idx
-                            )
+                        salva_dati()
 
-                            salva_dati()
+                        st.success(
+                            "Campo archiviato con registro completo!"
+                        )
 
-                            st.success(
-                                "Campo archiviato con registro completo!"
-                            )
+                        st.rerun()
 
-                            st.rerun()
-
-                except Exception as e:
-
-                    st.error(
-                        f"Errore dati meteo: {e}"
-                    )
-
-
-# ============================================================
-# MAPPA
-# ============================================================
+# Mappa dei campi
 
 with t_map:
 
@@ -1574,10 +1546,7 @@ with t_map:
 
         st.info("Nessun campo.")
 
-
-# ============================================================
-# ARCHIVIO
-# ============================================================
+# Archivio
 
 with t_arc:
 
@@ -1639,10 +1608,7 @@ with t_arc:
 
                 mostra_registro(campo)
 
-
-# ============================================================
-# NOTA PERSISTENZA
-# ============================================================
+# Salvataggio automatico
 
 st.sidebar.caption(
     "💾 Il registro giornaliero viene salvato "
