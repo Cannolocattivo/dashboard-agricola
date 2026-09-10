@@ -471,7 +471,7 @@ def leggi_meteo(campo):
             },
             "aggiornato": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        return dati, True, "Meteo aggiornato correttamente."
+        return dati, True, ""
 
     except Exception:
         ultimo = campo.get("ultimo_meteo")
@@ -657,7 +657,7 @@ def mostra_registro(campo):
     for r in reversed(registro):
         righe.append({
             "Campo": campo.get("nome", ""),
-            "Coltivazione": ", ".join(campo.get("coltura", "")),
+            "Coltivazione": campo.get("coltura", ""),
             "Terreno": campo.get("terreno", "Franco"),
             "Data": r.get("data", ""),
             "Ora": r.get("ora_rilevazione", ""),
@@ -691,7 +691,7 @@ def mostra_registro(campo):
 def coltura_non_ottimale(coltura, terreno):
     """Restituisce le colture che non sono nella fascia di terreno consigliata."""
     problemi = []
-    for coltura in [coltura]:
+    for coltura in [campo.get("coltura", "")]:
         terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
         if terreno not in terreni_ok:
             problemi.append({
@@ -908,9 +908,9 @@ with t_mon:
                         pass
 
                 testo_meteo = (
-                    f"Meteo aggiornato correttamente. Ultimo aggiornamento: {ultimo_aggiornamento}"
+                    f"Dati meteo aggiornati alle : {datetime.strptime(ultimo_aggiornamento, '%d/%m/%Y %H:%M:%S').strftime('%H:%M:%S %d/%m/%Y')}"
                     if ultimo_aggiornamento
-                    else "Meteo aggiornato correttamente."
+                    else ""
                 )
 
                 st.markdown(
@@ -968,7 +968,7 @@ with t_mon:
                 fattore_terreno = FATTORE_TERRENO.get(terreno, 1.0)
                 calcoli_irr = []
 
-                for coltura in [coltura]:
+                for coltura in [campo.get("coltura", "")]:
                     info = DIZIONARIO[coltura]
                     fabb = info["fabbisogno"] * fattore_terreno
                     sogl = info["soglia_umidita"]
@@ -1041,9 +1041,7 @@ with t_mon:
                 )
 
                 st.caption(
-                    f"Terreno: {terreno}. Con un unico impianto la coltivazione "
-                    f"vengono gestite insieme: il tempo impostato è quello "
-                    f"della richiesta maggiore ({minuti_irr:.0f} minuti)."
+                    f"Terreno: {terreno}. Tempo di irrigazione impostato: {minuti_irr:.0f} minuti."
                 )
 
 # Irrigazione Forzata
@@ -1211,7 +1209,7 @@ with t_mon:
 
                 righe_intervento = [{
                     "Campo": campo["nome"],
-                    "Coltivazione": coltivazione,
+                    "Coltivazione": campo.get("coltura", ""),
                     "Terreno": terreno,
                     "Tipo": "Automatico",
                     "Stato": s_irr,
@@ -1597,27 +1595,3 @@ with t_arc:
                         "-"
                     )
                 )
-
-                c4.metric(
-                    "Terreno",
-                    terreno_arch
-                )
-
-                st.write("**Coltivazione:** " + coltivazione_arch)
-                st.write(f"**Tipologia terreno:** {terreno_arch}")
-                st.write(
-                    f"**Note:** {campo.get('note', '-')}"
-                )
-
-                st.write(
-                    "### 📚 Registro cronologico completo"
-                )
-
-                mostra_registro(campo)
-
-# Salvataggio automatico
-
-st.sidebar.caption(
-    "💾 Il registro giornaliero viene salvato "
-    "automaticamente in agri_data.json"
-)
