@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import json
+import pydeck as pdk
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -52,6 +53,24 @@ DIZIONARIO = {
         "soglia_umidita": 0.18,
         "giorni_maturazione": 240
     }
+}
+
+TIPI_TERRENO = [
+    "Sabbioso",
+    "Franco-sabbioso",
+    "Franco",
+    "Franco-argilloso",
+    "Argilloso"
+]
+
+# Il terreno modifica la soglia di umidità: sui terreni più drenanti
+# conviene intervenire prima, mentre quelli argillosi trattengono più acqua.
+FATTORE_TERRENO = {
+    "Sabbioso": 1.15,
+    "Franco-sabbioso": 1.08,
+    "Franco": 1.00,
+    "Franco-argilloso": 0.94,
+    "Argilloso": 0.88
 }
 
 
@@ -118,6 +137,8 @@ if "dati_caricati" not in st.session_state:
                 "lat": 41.9028,
                 "lon": 12.4964,
                 "coltura": "Pomodoro",
+                "coltivazioni": ["Pomodoro"],
+                "terreno": "Franco",
                 "portata": 15.0,
                 "data_semina": datetime.now().strftime("%Y-%m-%d"),
                 "registro": []
@@ -126,9 +147,17 @@ if "dati_caricati" not in st.session_state:
 
     for campo in st.session_state.campi:
         campo.setdefault("registro", [])
+        campo.setdefault("terreno", "Franco")
+        if not campo.get("coltivazioni"):
+            campo["coltivazioni"] = [campo.get("coltura", "Pomodoro")]
+        campo["coltura"] = campo["coltivazioni"][0]
 
     for campo in st.session_state.archivio:
         campo.setdefault("registro", [])
+        campo.setdefault("terreno", "Franco")
+        if not campo.get("coltivazioni"):
+            campo["coltivazioni"] = [campo.get("coltura", "Pomodoro")]
+        campo["coltura"] = campo["coltivazioni"][0]
 
     st.session_state.dati_caricati = True
 
@@ -170,6 +199,12 @@ def dati_registro(campo, dati_giorno):
     """
 
     return {
+        "campo": dati_giorno.get("campo", campo.get("nome", "")),
+        "coltivazioni": dati_giorno.get(
+            "coltivazioni",
+            campo.get("coltivazioni", [campo.get("coltura", "")])
+        ),
+        "terreno": dati_giorno.get("terreno", campo.get("terreno", "Franco")),
         "data": dati_giorno["data"],
         "ora_rilevazione": dati_giorno["ora_rilevazione"],
         "stato": dati_giorno["stato"],
@@ -201,6 +236,9 @@ def mostra_registro(campo):
 
     for r in reversed(registro):
         righe.append({
+            "Campo": campo.get("nome", ""),
+            "Coltivazioni": ", ".join(campo.get("coltivazioni", [campo.get("coltura", "")])),
+            "Terreno": campo.get("terreno", "Franco"),
             "Data": r.get("data", ""),
             "Ora": r.get("ora_rilevazione", ""),
             "Stato": r.get("stato", ""),
@@ -249,9 +287,17 @@ with st.sidebar.form("form_c", clear_on_submit=True):
         format="%.4f"
     )
 
-    n_colt = st.selectbox(
-        "Pianta",
-        list(DIZIONARIO.keys())
+    n_colt = st.multiselect(
+        "Coltivazioni",
+        list(DIZIONARIO.keys()),
+        default=["Pomodoro"],
+        help="Puoi associare più coltivazioni allo stesso campo."
+    )
+
+    n_terr = st.selectbox(
+        "Tipologia di terreno",
+        TIPI_TERRENO,
+        index=2
     )
 
     n_port = st.number_input(
@@ -266,13 +312,15 @@ with st.sidebar.form("form_c", clear_on_submit=True):
 
     sub = st.form_submit_button("Salva")
 
-    if sub and n_nome:
+    if sub and n_nome and n_colt:
 
         st.session_state.campi.append({
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
-            "coltura": n_colt,
+            "coltura": n_colt[0],
+            "coltivazioni": n_colt,
+            "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
             "registro": []
@@ -286,15 +334,6 @@ if st.sidebar.button("💾 Salva dati"):
 
     salva_dati()
     st.sidebar.success("Dati salvati.")
-
-
-if st.sidebar.button("🗑️ Svuota"):
-
-    st.session_state.campi = []
-    st.session_state.archivio = []
-
-    salva_dati()
-    st.rerun()
 
 
 # ============================================================
@@ -324,10 +363,11 @@ with t_mon:
             st.session_state.campi
         ):
 
-            info = DIZIONARIO[campo["coltura"]]
+            coltivazioni = campo.get("coltivazioni") or [campo.get("coltura", "Pomodoro")]
+            terreno = campo.get("terreno", "Franco")
 
             with st.expander(
-                f"🌿 {campo['nome']} — {campo['coltura']}",
+                f"🌿 {campo['nome']} — {', '.join(coltivazioni)}",
                 expanded=True
             ):
 
@@ -476,85 +516,99 @@ with t_mon:
                     # CALCOLO IRRIGAZIONE
                     # ====================================================
 
-                    fabb = info["fabbisogno"]
-                    sogl = info["soglia_umidita"]
-                    gg_m = info["giorni_maturazione"]
+                    oggi = datetime.now().strftime("%Y-%m-%d")
+                    g_irr = datetime.now().strftime("%d/%m/%Y")
+                    ora_rilevazione = datetime.now().strftime("%H:%M:%S")
 
-                    oggi = datetime.now().strftime(
-                        "%Y-%m-%d"
-                    )
+                    # Ogni coltivazione viene calcolata separatamente.
+                    # Il campo però ha un solo impianto: se le coltivazioni
+                    # vengono irrigate insieme, il tempo di funzionamento
+                    # necessario è quello della coltivazione che richiede più acqua.
+                    fattore_terreno = FATTORE_TERRENO.get(terreno, 1.0)
+                    calcoli_irr = []
 
-                    g_irr = datetime.now().strftime(
-                        "%d/%m/%Y"
-                    )
+                    for coltura in coltivazioni:
+                        info = DIZIONARIO[coltura]
+                        fabb = info["fabbisogno"] * fattore_terreno
+                        sogl = info["soglia_umidita"]
+                        intg = max(0.0, fabb - piog)
 
-                    ora_rilevazione = datetime.now().strftime(
-                        "%H:%M:%S"
-                    )
+                        if piog >= fabb or p_dom >= fabb:
+                            stato_colt = "🚫 Sospesa"
+                            acqua = 0.0
+                        elif soil < sogl:
+                            stato_colt = "💧 Attiva"
+                            acqua = intg
+                        else:
+                            stato_colt = "✅ Sospesa"
+                            acqua = 0.0
 
-                    if (
-                        piog >= fabb
-                        or p_dom >= fabb
-                    ):
+                        minuti = (acqua / campo["portata"]) * 60 if campo["portata"] > 0 else 0
+                        calcoli_irr.append({
+                            "coltura": coltura,
+                            "fabbisogno": fabb,
+                            "soglia": sogl,
+                            "stato": stato_colt,
+                            "acqua": acqua,
+                            "minuti": minuti,
+                            "maturazione": info["giorni_maturazione"]
+                        })
 
+                    # Irrigazione contemporanea: un solo impianto alimenta
+                    # tutte le coltivazioni del campo, quindi non sommiamo
+                    # i minuti delle colture (evitando di irrigare due volte).
+                    attive = [x for x in calcoli_irr if x["stato"] == "💧 Attiva"]
+                    a_smr = max((x["acqua"] for x in attive), default=0.0)
+                    minuti_irr = max((x["minuti"] for x in attive), default=0.0)
+
+                    if attive:
+                        s_irr = "💧 Attiva"
+                    else:
                         s_irr = "🚫 Sospesa"
 
-                        o_fin = "06:00"
+                    o_fin = (
+                        datetime.strptime("06:00", "%H:%M")
+                        + timedelta(minutes=int(minuti_irr))
+                    ).strftime("%H:%M")
 
-                        a_smr = 0.0
+                    risp = max(
+                        0.0,
+                        max((x["fabbisogno"] for x in calcoli_irr), default=0.0) - a_smr
+                    )
 
-                        risp = fabb
+                    st.write("### 🌱 Irrigazione per coltivazione")
+                    df_irr = pd.DataFrame([
+                        {
+                            "Coltivazione": x["coltura"],
+                            "Terreno": terreno,
+                            "Fabbisogno": f"{x['fabbisogno']:.1f} mm",
+                            "Soglia suolo": f"{x['soglia']:.3f}",
+                            "Stato": x["stato"],
+                            "Acqua necessaria": f"{x['acqua']:.1f} mm",
+                            "Tempo": f"{x['minuti']:.0f} min"
+                        }
+                        for x in calcoli_irr
+                    ])
+                    st.dataframe(
+                        df_irr,
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
-                    elif soil < sogl:
-
-                        s_irr = "💧 Attiva"
-
-                        intg = max(
-                            0.0,
-                            fabb - piog
-                        )
-
-                        t_ore = (
-                            intg /
-                            campo["portata"]
-                        )
-
-                        minu = int(
-                            t_ore * 60
-                        )
-
-                        o_fin = (
-                            datetime.strptime(
-                                "06:00",
-                                "%H:%M"
-                            )
-                            + timedelta(
-                                minutes=minu
-                            )
-                        ).strftime("%H:%M")
-
-                        a_smr = intg
-
-                        risp = max(
-                            0.0,
-                            fabb - a_smr
-                        )
-
-                    else:
-
-                        s_irr = "✅ Sospesa"
-
-                        o_fin = "06:00"
-
-                        a_smr = 0.0
-
-                        risp = fabb
+                    st.caption(
+                        f"Terreno: {terreno}. Con un unico impianto le coltivazioni "
+                        f"vengono gestite insieme: il tempo impostato è quello "
+                        f"della richiesta maggiore ({minuti_irr:.0f} minuti)."
+                    )
 
                     # ====================================================
                     # REGISTRAZIONE AUTOMATICA GIORNALIERA
                     # ====================================================
 
                     dati_giorno = {
+                        "campo": campo["nome"],
+                        "coltivazioni": coltivazioni,
+                        "terreno": terreno,
                         "data": oggi,
                         "ora_rilevazione": ora_rilevazione,
                         "stato": s_irr,
@@ -592,6 +646,9 @@ with t_mon:
                     )
 
                     df_oggi = pd.DataFrame({
+                        "Campo": [campo["nome"]],
+                        "Coltivazioni": [", ".join(coltivazioni)],
+                        "Terreno": [terreno],
                         "Stato": [s_irr],
                         "Giorno": [g_irr],
                         "Temp. Aria": [
@@ -821,14 +878,39 @@ with t_map:
         df_m = pd.DataFrame([
             {
                 "latitude": c["lat"],
-                "longitude": c["lon"]
+                "longitude": c["lon"],
+                "Campo": c["nome"],
+                "Coltivazioni": ", ".join(
+                    c.get("coltivazioni", [c.get("coltura", "")])
+                ),
+                "Terreno": c.get("terreno", "Franco")
             }
             for c in st.session_state.campi
         ])
 
-        st.map(
-            df_m,
-            zoom=12,
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=df_m,
+            get_position="[longitude, latitude]",
+            get_radius=120,
+            pickable=True
+        )
+
+        view = pdk.ViewState(
+            latitude=df_m["latitude"].mean(),
+            longitude=df_m["longitude"].mean(),
+            zoom=12
+        )
+
+        st.pydeck_chart(
+            pdk.Deck(
+                layers=[layer],
+                initial_view_state=view,
+                tooltip={
+                    "html": "<b>{Campo}</b><br/>Coltivazioni: {Coltivazioni}<br/>Terreno: {Terreno}",
+                    "style": {"backgroundColor": "white", "color": "black"}
+                }
+            ),
             use_container_width=True
         )
 
@@ -853,12 +935,15 @@ with t_arc:
 
         for campo in st.session_state.archivio:
 
+            coltivazioni_arch = campo.get("coltivazioni") or [campo.get("coltura", "")]
+            terreno_arch = campo.get("terreno", "Franco")
+
             with st.expander(
-                f"🌾 {campo['nome']} — {campo['coltura']}",
+                f"🌾 {campo['nome']} — {', '.join(coltivazioni_arch)}",
                 expanded=False
             ):
 
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3, c4 = st.columns(4)
 
                 c1.metric(
                     "Quintali",
@@ -881,6 +966,13 @@ with t_arc:
                     )
                 )
 
+                c4.metric(
+                    "Terreno",
+                    terreno_arch
+                )
+
+                st.write(f"**Coltivazioni:** {", ".join(coltivazioni_arch)}")
+                st.write(f"**Tipologia terreno:** {terreno_arch}")
                 st.write(
                     f"**Note:** {campo.get('note', '-')}"
                 )
