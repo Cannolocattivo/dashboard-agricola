@@ -652,11 +652,6 @@ if st.session_state.get("campo_da_confermare"):
             st.rerun()
 
 
-if st.sidebar.button("💾 Salva dati"):
-
-    salva_dati()
-    st.sidebar.success("Dati salvati.")
-
 # Schede principali
 
 t_mon, t_map, t_arc = st.tabs([
@@ -895,19 +890,42 @@ with t_mon:
 
                 st.write("#### 💧 Comando irrigazione")
 
-                forza_key = f"forza_attiva_{idx}"
-                durata_key = f"durata_forza_{idx}"
+                irrigazione_forzata_attiva = bool(
+                    campo.get("irrigazione_forzata", False)
+                )
 
-                if st.button(
-                    "💧 Forza irrigazione del campo",
-                    key=f"forza_irr_{idx}",
-                    use_container_width=False
-                ):
-                    st.session_state[forza_key] = True
-                    st.session_state.pop("irrigazione_forzata_confermata", None)
+                # "Forza irrigazione" è disponibile soltanto quando
+                # l'irrigazione per la coltivazione è sospesa.
+                forza_disabilitata = (
+                    s_irr != "🚫 Sospesa"
+                    or irrigazione_forzata_attiva
+                )
+
+                col_forza, col_stop = st.columns(2)
+
+                with col_forza:
+                    richiesta_forza = st.button(
+                        "💧 Forza irrigazione",
+                        key=f"azione_forza_{idx}",
+                        disabled=forza_disabilitata,
+                        use_container_width=True
+                    )
+
+                # Il pulsante STOP resta sempre visibile.
+                # Diventa attivo solo dopo la conferma effettiva della forzatura.
+                with col_stop:
+                    ferma_forzatura = st.button(
+                        "⏹️ Ferma irrigazione forzata",
+                        key=f"azione_stop_forza_{idx}",
+                        disabled=not irrigazione_forzata_attiva,
+                        use_container_width=True
+                    )
+
+                if richiesta_forza and not forza_disabilitata:
+                    st.session_state[f"richiesta_forza_{idx}"] = True
                     st.rerun()
 
-                if st.session_state.get(forza_key, False):
+                if st.session_state.get(f"richiesta_forza_{idx}", False):
                     st.warning(
                         f"Stai per irrigare manualmente **{campo['nome']}**. "
                         "Indica la durata e conferma l'intervento."
@@ -919,7 +937,7 @@ with t_mon:
                         max_value=1440,
                         value=30,
                         step=5,
-                        key=durata_key
+                        key=f"durata_forza_{idx}"
                     )
 
                     acqua_forzata = (
@@ -927,6 +945,7 @@ with t_mon:
                         if campo.get("portata", 0) > 0
                         else 0.0
                     )
+
                     ora_inizio_forzata = datetime.now()
                     fine_forzata = (
                         ora_inizio_forzata
@@ -944,7 +963,7 @@ with t_mon:
                     with c_forza1:
                         conferma_forzatura = st.button(
                             "Conferma irrigazione",
-                            key=f"conferma_forza_{idx}",
+                            key=f"conferma_forza_btn_{idx}",
                             type="primary",
                             use_container_width=True
                         )
@@ -957,32 +976,46 @@ with t_mon:
                         )
 
                     if annulla_forzatura:
-                        st.session_state.pop(forza_key, None)
-                        st.session_state.pop(durata_key, None)
+                        st.session_state[f"richiesta_forza_{idx}"] = False
                         st.rerun()
 
                     if conferma_forzatura:
                         ora_forzatura = datetime.now()
-                        minuti_forzati = float(st.session_state.get(durata_key, minuti_forzati))
+                        minuti_forzati = float(
+                            st.session_state.get(
+                                f"durata_forza_{idx}",
+                                minuti_forzati
+                            )
+                        )
+
                         acqua_forzata = (
                             campo["portata"] * minuti_forzati / 60
                             if campo.get("portata", 0) > 0
                             else 0.0
                         )
+
                         fine_forzata = (
                             ora_forzatura
                             + timedelta(minutes=int(minuti_forzati))
                         ).strftime("%H:%M")
 
+                        campo["irrigazione_forzata"] = True
+                        campo["irrigazione_attiva"] = True
+                        campo["forzatura_inizio"] = (
+                            ora_forzatura.strftime("%Y-%m-%d %H:%M:%S")
+                        )
+                        campo["forzatura_fine_prevista"] = fine_forzata
+
                         evento_forzatura = {
                             "campo": campo["nome"],
-                            "coltura": n_colt,
+                            "coltura": campo.get("coltura", ""),
                             "terreno": terreno,
                             "data": ora_forzatura.strftime("%Y-%m-%d"),
                             "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
-                            "stato": "💧 IRRIGAZIONE FORZATA",
-                            "tipo_evento": "irrigazione_forzata",
+                            "stato": "💧 IRRIGAZIONE FORZATA ATTIVA",
+                            "tipo_evento": "irrigazione_forzata_avvio",
                             "confermata": True,
+                            "operazione": "Avvio irrigazione forzata",
                             "temperatura": round(temp, 1),
                             "umidita_aria": round(umid, 1),
                             "pioggia": round(piog, 1),
@@ -994,24 +1027,54 @@ with t_mon:
                             "fine": fine_forzata,
                             "erogata": round(acqua_forzata, 1),
                             "risparmiata": 0.0,
-                            "minuti_irrigazione": round(minuti_forzati, 1),
-                            "coltura_calcolata": calcoli_irr
+                            "minuti_irrigazione": round(minuti_forzati, 1)
                         }
 
                         registra_evento(campo, evento_forzatura)
                         salva_dati()
 
-                        # Pulizia immediata dello stato della richiesta.
-                        # Non usiamo un flag di conferma persistente: dopo il rerun
-                        # la finestra di autorizzazione non viene ricreata.
-                        st.session_state.pop(forza_key, None)
-                        st.session_state.pop(durata_key, None)
-                        st.session_state["irrigazione_forzata_confermata"] = {
-                            "campo": campo["nome"],
-                            "minuti": minuti_forzati,
-                            "timestamp": ora_forzatura.strftime("%H:%M:%S")
-                        }
+                        st.session_state[f"richiesta_forza_{idx}"] = False
                         st.rerun()
+
+                if ferma_forzatura and irrigazione_forzata_attiva:
+                    ora_stop = datetime.now()
+                    campo["irrigazione_forzata"] = False
+                    campo["irrigazione_attiva"] = False
+                    campo["forzatura_fine_effettiva"] = (
+                        ora_stop.strftime("%Y-%m-%d %H:%M:%S")
+                    )
+
+                    evento_stop = {
+                        "campo": campo["nome"],
+                        "coltura": campo.get("coltura", ""),
+                        "terreno": terreno,
+                        "data": ora_stop.strftime("%Y-%m-%d"),
+                        "ora_rilevazione": ora_stop.strftime("%H:%M:%S"),
+                        "stato": "⏹️ IRRIGAZIONE FORZATA FERMATA",
+                        "tipo_evento": "irrigazione_forzata_stop",
+                        "confermata": True,
+                        "operazione": "Arresto irrigazione forzata",
+                        "temperatura": round(temp, 1),
+                        "umidita_aria": round(umid, 1),
+                        "pioggia": round(piog, 1),
+                        "vento": round(vent, 1),
+                        "radiazione": round(rads, 1),
+                        "umidita_suolo": round(soil, 3),
+                        "pioggia_giornaliera": round(p_dom, 1),
+                        "inizio": "",
+                        "fine": ora_stop.strftime("%H:%M"),
+                        "erogata": 0.0,
+                        "risparmiata": 0.0,
+                        "minuti_irrigazione": 0.0
+                    }
+
+                    registra_evento(campo, evento_stop)
+                    salva_dati()
+
+                    st.success(
+                        f"Irrigazione forzata fermata alle {ora_stop.strftime('%H:%M:%S')}."
+                    )
+                    st.rerun()
 
 # Registrazione Automatica Giornaliera
 
@@ -1080,14 +1143,14 @@ with t_mon:
                 for evento in campo.get("registro", []):
                     if (
                         evento.get("data") == oggi
-                        and evento.get("tipo_evento") == "irrigazione_forzata"
+                        and evento.get("tipo_evento") in ("irrigazione_forzata", "irrigazione_forzata_avvio", "irrigazione_forzata_stop")
                         and evento.get("confermata") is True
                     ):
                         righe_intervento.append({
                             "Campo": evento.get("campo", campo["nome"]),
                             "Coltivazione": evento.get("coltura", coltura),
                             "Terreno": evento.get("terreno", terreno),
-                            "Tipo": "Forzatura manuale",
+                            "Tipo": evento.get("operazione", "Forzatura manuale"),
                             "Stato": evento.get("stato", "💧 IRRIGAZIONE FORZATA"),
                             "Giorno": datetime.strptime(evento["data"], "%Y-%m-%d").strftime("%d/%m/%Y"),
                             "_ora_evento": evento.get("ora_rilevazione", "00:00:00"),
@@ -1323,20 +1386,20 @@ with t_mon:
                 with col_salva:
                     if st.button(
                         "Salva e chiudi campo",
-                        key=f"salva_chiudi_{idx}",
+                        key=f"azione_salva_{idx}",
                         use_container_width=True
                     ):
-                        st.session_state[f"conferma_salva_{idx}"] = True
+                        st.session_state[f"richiesta_salva_{idx}"] = True
 
                 with col_cancella:
                     if st.button(
                         "Cancella senza salvare",
-                        key=f"cancella_senza_salvare_{idx}",
+                        key=f"azione_cancella_{idx}",
                         use_container_width=True
                     ):
-                        st.session_state[f"conferma_cancella_{idx}"] = True
+                        st.session_state[f"richiesta_cancella_{idx}"] = True
 
-                if st.session_state.get(f"conferma_salva_{idx}", False):
+                if st.session_state.get(f"richiesta_salva_{idx}", False):
                     st.warning(
                         f"Vuoi davvero salvare i dati e chiudere il campo **{campo['nome']}**?"
                     )
@@ -1345,12 +1408,12 @@ with t_mon:
                     with c_ok:
                         if st.button(
                             "Conferma e chiudi",
-                            key=f"conferma_salva_{idx}",
+                            key=f"conferma_salvataggio_btn_{idx}",
                             type="primary",
                             use_container_width=True
                         ):
                             salva_dati()
-                            st.session_state[f"conferma_salva_{idx}"] = False
+                            st.session_state[f"richiesta_salva_{idx}"] = False
                             st.session_state[f"campo_chiuso_{idx}"] = True
                             st.rerun()
 
@@ -1360,10 +1423,10 @@ with t_mon:
                             key=f"annulla_salva_{idx}",
                             use_container_width=True
                         ):
-                            st.session_state[f"conferma_salva_{idx}"] = False
+                            st.session_state[f"richiesta_salva_{idx}"] = False
                             st.rerun()
 
-                if st.session_state.get(f"conferma_cancella_{idx}", False):
+                if st.session_state.get(f"richiesta_cancella_{idx}", False):
                     st.warning(
                         f"Vuoi davvero cancellare le modifiche del campo **{campo['nome']}** senza salvarle?"
                     )
@@ -1372,7 +1435,7 @@ with t_mon:
                     with c_ok:
                         if st.button(
                             "Conferma cancellazione",
-                            key=f"conferma_cancella_{idx}",
+                            key=f"conferma_cancellazione_btn_{idx}",
                             type="primary",
                             use_container_width=True
                         ):
@@ -1395,7 +1458,7 @@ with t_mon:
                             # Se invece il campo non era ancora presente tra i
                             # dati salvati, vengono semplicemente annullate le
                             # modifiche correnti.
-                            st.session_state[f"conferma_cancella_{idx}"] = False
+                            st.session_state[f"richiesta_cancella_{idx}"] = False
                             st.session_state[f"campo_chiuso_{idx}"] = True
 
                             if campo_salvato:
@@ -1409,7 +1472,7 @@ with t_mon:
                             key=f"annulla_cancella_{idx}",
                             use_container_width=True
                         ):
-                            st.session_state[f"conferma_cancella_{idx}"] = False
+                            st.session_state[f"richiesta_cancella_{idx}"] = False
                             st.rerun()
 
 # Mappa dei campi
