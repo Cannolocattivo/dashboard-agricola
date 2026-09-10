@@ -13,10 +13,183 @@ from datetime import datetime, timedelta
 
 st.set_page_config(
     page_title="AgriSmart",
-    layout="wide"
+    page_icon="🌱",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🚜 Dashboard")
+# Un po' di ordine visivo, senza cambiare la struttura della dashboard.
+st.markdown(
+    """
+    <style>
+        .stApp {
+            background: linear-gradient(180deg, #f6f8f5 0%, #ffffff 28%);
+        }
+
+        .block-container {
+            max-width: 1450px;
+            padding-top: 1.35rem;
+            padding-bottom: 2.5rem;
+        }
+
+        /* Header */
+        .agri-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 1.15rem;
+        }
+
+        .agri-logo {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 14px;
+            background: #e8f3e9;
+            font-size: 25px;
+            box-shadow: inset 0 0 0 1px #d6e8d8;
+        }
+
+        .agri-title {
+            margin: 0;
+            color: #203126;
+            font-size: 2rem;
+            font-weight: 750;
+            letter-spacing: -0.03em;
+        }
+
+        .agri-subtitle {
+            margin: 2px 0 0 0;
+            color: #6a756e;
+            font-size: 0.93rem;
+        }
+
+        /* Sidebar */
+        section[data-testid="stSidebar"] {
+            background: #f7faf7;
+            border-right: 1px solid #e5ebe6;
+        }
+
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 1.2rem;
+        }
+
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3 {
+            color: #28412f;
+        }
+
+        /* Tabs */
+        button[data-baseweb="tab"] {
+            font-weight: 650;
+            color: #68736b;
+            padding-top: 0.75rem;
+            padding-bottom: 0.75rem;
+        }
+
+        button[data-baseweb="tab"][aria-selected="true"] {
+            color: #275a32;
+        }
+
+        div[data-baseweb="tab-highlight"] {
+            background-color: #3c7d48;
+            height: 3px;
+            border-radius: 3px;
+        }
+
+        /* Metriche */
+        div[data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid #e2e9e3;
+            border-radius: 14px;
+            padding: 0.9rem 1rem;
+            box-shadow: 0 2px 10px rgba(34, 58, 39, 0.045);
+        }
+
+        div[data-testid="stMetricLabel"] p {
+            color: #6b776f;
+            font-size: 0.78rem;
+            font-weight: 650;
+        }
+
+        div[data-testid="stMetricValue"] {
+            color: #24462c;
+            font-size: 1.45rem;
+            font-weight: 750;
+        }
+
+        /* Schede campi */
+        div[data-testid="stExpander"] {
+            border: 1px solid #dfe7e1;
+            border-radius: 16px;
+            overflow: hidden;
+            background: #ffffff;
+            box-shadow: 0 4px 16px rgba(37, 62, 42, 0.045);
+            margin-bottom: 0.8rem;
+        }
+
+        div[data-testid="stExpander"] summary {
+            background: #fbfdfb;
+            padding-top: 0.95rem !important;
+            padding-bottom: 0.95rem !important;
+        }
+
+        div[data-testid="stExpander"] summary:hover {
+            background: #f6faf6;
+        }
+
+        /* Tabelle */
+        div[data-testid="stDataFrame"] {
+            border: 1px solid #e1e8e2;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(35, 54, 41, 0.035);
+        }
+
+        /* Pulsanti */
+        .stButton > button,
+        .stFormSubmitButton > button {
+            border-radius: 10px;
+            font-weight: 650;
+            min-height: 2.5rem;
+        }
+
+        .stButton > button:hover,
+        .stFormSubmitButton > button:hover {
+            border-color: #4b8b57;
+            color: #275a32;
+        }
+
+        /* Input */
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="textarea"] > div {
+            border-radius: 10px;
+        }
+
+        /* Messaggi */
+        div[data-testid="stAlert"] {
+            border-radius: 12px;
+        }
+
+        hr {
+            border-color: #e6ece7;
+            margin: 1.2rem 0;
+        }
+    </style>
+
+    <div class="agri-header">
+        <div class="agri-logo">🌱</div>
+        <div>
+            <div class="agri-title">AgriSmart</div>
+            <div class="agri-subtitle">Controllo dei campi, condizioni meteo e gestione dell'irrigazione</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 
 FILE_DATI = Path("agri_data.json")
@@ -52,6 +225,136 @@ DIZIONARIO = {
         "fabbisogno": 3.5,
         "soglia_umidita": 0.18,
         "giorni_maturazione": 240
+    },
+    "Peperone": {
+        "fabbisogno": 5.0,
+        "soglia_umidita": 0.24,
+        "giorni_maturazione": 90
+    },
+    "Melanzana": {
+        "fabbisogno": 5.0,
+        "soglia_umidita": 0.24,
+        "giorni_maturazione": 90
+    },
+    "Zucchina": {
+        "fabbisogno": 4.5,
+        "soglia_umidita": 0.25,
+        "giorni_maturazione": 55
+    },
+    "Cetriolo": {
+        "fabbisogno": 5.0,
+        "soglia_umidita": 0.25,
+        "giorni_maturazione": 60
+    },
+    "Lattuga": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.23,
+        "giorni_maturazione": 45
+    },
+    "Cipolla": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.18,
+        "giorni_maturazione": 120
+    },
+    "Carota": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.20,
+        "giorni_maturazione": 80
+    },
+    "Fragola": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.23,
+        "giorni_maturazione": 70
+    },
+    "Melo": {
+        "fabbisogno": 3.5,
+        "soglia_umidita": 0.18,
+        "giorni_maturazione": 180
+    },
+    "Pesco": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.18,
+        "giorni_maturazione": 150
+    },
+    "Agrumi": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.17,
+        "giorni_maturazione": 210
+    },
+    "Girasole": {
+        "fabbisogno": 3.5,
+        "soglia_umidita": 0.18,
+        "giorni_maturazione": 120
+    },
+    "Soia": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.20,
+        "giorni_maturazione": 130
+    },
+    "Melone": {
+        "fabbisogno": 5.5,
+        "soglia_umidita": 0.25,
+        "giorni_maturazione": 85
+    },
+    "Cocomero": {
+        "fabbisogno": 6.0,
+        "soglia_umidita": 0.25,
+        "giorni_maturazione": 90
+    },
+    "Broccolo": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.22,
+        "giorni_maturazione": 75
+    },
+    "Cavolfiore": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.22,
+        "giorni_maturazione": 90
+    },
+    "Spinaci": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.23,
+        "giorni_maturazione": 45
+    },
+    "Fagiolo": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.22,
+        "giorni_maturazione": 70
+    },
+    "Pisello": {
+        "fabbisogno": 3.5,
+        "soglia_umidita": 0.21,
+        "giorni_maturazione": 70
+    },
+    "Riso": {
+        "fabbisogno": 6.0,
+        "soglia_umidita": 0.30,
+        "giorni_maturazione": 160
+    },
+    "Orzo": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.18,
+        "giorni_maturazione": 150
+    },
+    "Avena": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.18,
+        "giorni_maturazione": 150
+    },
+    "Mandorlo": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.16,
+        "giorni_maturazione": 210
+    },
+    "Noce": {
+        "fabbisogno": 3.0,
+        "soglia_umidita": 0.16,
+        "giorni_maturazione": 210
+    },
+    "Erba medica": {
+        "fabbisogno": 4.0,
+        "soglia_umidita": 0.20,
+        "giorni_maturazione": 60
     }
 }
 
@@ -358,6 +661,22 @@ with t_mon:
         st.info("Nessun campo.")
 
     else:
+        totale_campi = len(st.session_state.campi)
+        totale_colture = sum(
+            len(c.get("coltivazioni") or [c.get("coltura", "")])
+            for c in st.session_state.campi
+        )
+        terreni_presenti = len(set(
+            c.get("terreno", "Franco") for c in st.session_state.campi
+        ))
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Campi attivi", totale_campi)
+        k2.metric("Coltivazioni gestite", totale_colture)
+        k3.metric("Tipi di terreno", terreni_presenti)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+
 
         for idx, campo in enumerate(
             st.session_state.campi
@@ -551,7 +870,8 @@ with t_mon:
                             "stato": stato_colt,
                             "acqua": acqua,
                             "minuti": minuti,
-                            "maturazione": info["giorni_maturazione"]
+                            "maturazione": info["giorni_maturazione"],
+                            "giorni_rimasti": giorni_rimasti
                         })
 
                     # Irrigazione contemporanea: un solo impianto alimenta
@@ -745,21 +1065,27 @@ with t_mon:
                     if temp < 12.0:
                         corr = 6
 
-                    g_rim = max(
-                        0,
-                        (gg_m - g_pass) + corr
-                    )
+                    previsione = []
+                    for calcolo in calcoli_irr:
+                        g_rim = max(
+                            0,
+                            (calcolo["maturazione"] - g_pass) + corr
+                        )
+                        d_rac = (
+                            datetime.now() +
+                            timedelta(days=g_rim)
+                        ).strftime("%d/%m/%Y")
+                        previsione.append({
+                            "Coltivazione": calcolo["coltura"],
+                            "Giorni rimasti": g_rim,
+                            "Data stimata": d_rac
+                        })
 
-                    d_rac = (
-                        datetime.now() +
-                        timedelta(days=g_rim)
-                    ).strftime(
-                        "%d/%m/%Y"
-                    )
-
-                    st.info(
-                        f"🌾 Giorni rimasti: "
-                        f"{g_rim} ({d_rac})"
+                    st.write("### 🌾 Previsione raccolta")
+                    st.dataframe(
+                        pd.DataFrame(previsione),
+                        use_container_width=True,
+                        hide_index=True
                     )
 
                     # ====================================================
@@ -892,8 +1218,21 @@ with t_map:
             "ScatterplotLayer",
             data=df_m,
             get_position="[longitude, latitude]",
-            get_radius=120,
-            pickable=True
+            get_radius=140,
+            pickable=True,
+            stroked=True,
+            filled=True
+        )
+
+        labels = pdk.Layer(
+            "TextLayer",
+            data=df_m,
+            get_position="[longitude, latitude]",
+            get_text="Campo",
+            get_size=18,
+            get_alignment_baseline="bottom",
+            get_pixel_offset=[0, -12],
+            pickable=False
         )
 
         view = pdk.ViewState(
@@ -904,91 +1243,13 @@ with t_map:
 
         st.pydeck_chart(
             pdk.Deck(
-                layers=[layer],
+                layers=[layer, labels],
                 initial_view_state=view,
                 tooltip={
                     "html": "<b>{Campo}</b><br/>Coltivazioni: {Coltivazioni}<br/>Terreno: {Terreno}",
-                    "style": {"backgroundColor": "white", "color": "black"}
                 }
             ),
             use_container_width=True
         )
 
-    else:
-
-        st.info("Nessun campo.")
-
-
-# ============================================================
-# ARCHIVIO
-# ============================================================
-
-with t_arc:
-
-    st.write("## 🗄️ Storico campi")
-
-    if not st.session_state.archivio:
-
-        st.caption("Vuoto.")
-
-    else:
-
-        for campo in st.session_state.archivio:
-
-            coltivazioni_arch = campo.get("coltivazioni") or [campo.get("coltura", "")]
-            terreno_arch = campo.get("terreno", "Franco")
-
-            with st.expander(
-                f"🌾 {campo['nome']} — {', '.join(coltivazioni_arch)}",
-                expanded=False
-            ):
-
-                c1, c2, c3, c4 = st.columns(4)
-
-                c1.metric(
-                    "Quintali",
-                    f"{campo.get('quintali', 0):.1f}"
-                )
-
-                c2.metric(
-                    "Semina",
-                    campo.get(
-                        "data_semina",
-                        "-"
-                    )
-                )
-
-                c3.metric(
-                    "Raccolto",
-                    campo.get(
-                        "data_raccolto",
-                        "-"
-                    )
-                )
-
-                c4.metric(
-                    "Terreno",
-                    terreno_arch
-                )
-
-                st.write(f"**Coltivazioni:** {", ".join(coltivazioni_arch)}")
-                st.write(f"**Tipologia terreno:** {terreno_arch}")
-                st.write(
-                    f"**Note:** {campo.get('note', '-')}"
-                )
-
-                st.write(
-                    "### 📚 Registro cronologico completo"
-                )
-
-                mostra_registro(campo)
-
-
-# ============================================================
-# NOTA PERSISTENZA
-# ============================================================
-
-st.sidebar.caption(
-    "💾 Il registro giornaliero viene salvato "
-    "automaticamente in agri_data.json"
-)
+        st.caption("I nomi dei campi sono mostrati direttamente sulla mappa; passando sul punto trovi anche coltivazioni e terreno.")
