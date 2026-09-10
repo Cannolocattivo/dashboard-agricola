@@ -557,7 +557,7 @@ if "dati_caricati" not in st.session_state:
                 "lat": 41.9028,
                 "lon": 12.4964,
                 "coltura": "Pomodoro",
-                                "terreno": "Franco",
+                "terreno": "Franco",
                 "portata": 15.0,
                 "data_semina": datetime.now().strftime("%Y-%m-%d"),
                 "registro": []
@@ -623,10 +623,7 @@ def dati_registro(campo, dati_giorno):
 
     return {
         "campo": dati_giorno.get("campo", campo.get("nome", "")),
-        "coltivazioni": dati_giorno.get(
-            "coltivazioni",
-            campo.get("coltivazioni", [campo.get("coltura", "")])
-        ),
+        "coltura": dati_giorno.get("coltura", campo.get("coltura", "")),
         "terreno": dati_giorno.get("terreno", campo.get("terreno", "Franco")),
         "data": dati_giorno["data"],
         "ora_rilevazione": dati_giorno["ora_rilevazione"],
@@ -660,7 +657,7 @@ def mostra_registro(campo):
     for r in reversed(registro):
         righe.append({
             "Campo": campo.get("nome", ""),
-            "Coltivazione": campo.get("coltura", ""),
+            "Coltivazione": ", ".join(campo.get("coltura", "")),
             "Terreno": campo.get("terreno", "Franco"),
             "Data": r.get("data", ""),
             "Ora": r.get("ora_rilevazione", ""),
@@ -691,7 +688,7 @@ def mostra_registro(campo):
     )
 
 
-def colture_non_ottimali(coltivazioni, terreno):
+def coltura_non_ottimale(coltura, terreno):
     """Restituisce le colture che non sono nella fascia di terreno consigliata."""
     problemi = []
     for coltura in [coltura]:
@@ -735,7 +732,7 @@ with st.sidebar.form("form_c", clear_on_submit=True):
     n_colt = st.selectbox(
         "Coltivazione",
         list(DIZIONARIO.keys()),
-        index=list(DIZIONARIO.keys()).index("Pomodoro") if "Pomodoro" in DIZIONARIO else 0
+        default=["Pomodoro"],
     )
 
     n_terr = st.selectbox(
@@ -761,14 +758,14 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
-            "coltura": n_colt,
+            "coltura": n_colt[0],
             "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
             "registro": []
         }
 
-        problemi_terreno = colture_non_ottimali(n_colt, n_terr)
+        problemi_terreno = coltura_non_ottimale(n_colt, n_terr)
 
         if problemi_terreno:
             st.session_state.campo_da_confermare = nuovo_campo
@@ -836,10 +833,7 @@ with t_mon:
 
     else:
         totale_campi = len(st.session_state.campi)
-        totale_colture = sum(
-            1
-            for c in st.session_state.campi
-        )
+        totale_colture = len(st.session_state.campi)
         terreni_presenti = len(set(
             c.get("terreno", "Franco") for c in st.session_state.campi
         ))
@@ -860,7 +854,7 @@ with t_mon:
             terreno = campo.get("terreno", "Franco")
 
             with st.expander(
-                f"🌿 {campo['nome']} — {campo.get('coltura', '')}",
+                f"🌿 {campo['nome']} — {coltura}",
                 expanded=True
             ):
 
@@ -968,7 +962,7 @@ with t_mon:
                 ora_rilevazione = datetime.now().strftime("%H:%M:%S")
 
                 # Ogni coltivazione viene calcolata separatamente.
-                # Il campo però ha un solo impianto: se le coltivazioni
+                # Il campo però ha un solo impianto: se la coltivazione
                 # vengono irrigate insieme, il tempo di funzionamento
                 # necessario è quello della coltivazione che richiede più acqua.
                 fattore_terreno = FATTORE_TERRENO.get(terreno, 1.0)
@@ -1002,7 +996,7 @@ with t_mon:
                     })
 
                 # Irrigazione contemporanea: un solo impianto alimenta
-                # tutte le coltivazioni del campo, quindi non sommiamo
+                # tutte la coltivazione del campo, quindi non sommiamo
                 # i minuti delle colture (evitando di irrigare due volte).
                 attive = [x for x in calcoli_irr if x["stato"] == "💧 Attiva"]
                 if not meteo_pronto:
@@ -1047,7 +1041,7 @@ with t_mon:
                 )
 
                 st.caption(
-                    f"Terreno: {terreno}. Con un unico impianto le coltivazioni "
+                    f"Terreno: {terreno}. Con un unico impianto la coltivazione "
                     f"vengono gestite insieme: il tempo impostato è quello "
                     f"della richiesta maggiore ({minuti_irr:.0f} minuti)."
                 )
@@ -1137,7 +1131,7 @@ with t_mon:
 
                         evento_forzatura = {
                             "campo": campo["nome"],
-                            "coltivazioni": list(coltivazioni),
+                            "coltura": n_colt,
                             "terreno": terreno,
                             "data": ora_forzatura.strftime("%Y-%m-%d"),
                             "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
@@ -1156,7 +1150,7 @@ with t_mon:
                             "erogata": round(acqua_forzata, 1),
                             "risparmiata": 0.0,
                             "minuti_irrigazione": round(minuti_forzati, 1),
-                            "coltivazioni_calcolate": calcoli_irr
+                            "coltura_calcolata": calcoli_irr
                         }
 
                         registra_evento(campo, evento_forzatura)
@@ -1178,7 +1172,7 @@ with t_mon:
 
                 dati_giorno = {
                     "campo": campo["nome"],
-                    "coltivazioni": list(coltivazioni),
+                    "coltura": n_colt,
                     "terreno": terreno,
                     "tipo_evento": "giornaliero",
                     "data": oggi,
@@ -1217,7 +1211,7 @@ with t_mon:
 
                 righe_intervento = [{
                     "Campo": campo["nome"],
-                    "Coltivazioni": ", ".join(coltivazioni),
+                    "Coltivazione": coltivazione,
                     "Terreno": terreno,
                     "Tipo": "Automatico",
                     "Stato": s_irr,
@@ -1246,7 +1240,7 @@ with t_mon:
                     ):
                         righe_intervento.append({
                             "Campo": evento.get("campo", campo["nome"]),
-                            "Coltivazioni": ", ".join(evento.get("coltivazioni", coltivazioni)),
+                            "Coltivazione": evento.get("coltura", coltura),
                             "Terreno": evento.get("terreno", terreno),
                             "Tipo": "Forzatura manuale",
                             "Stato": evento.get("stato", "💧 IRRIGAZIONE FORZATA"),
@@ -1487,8 +1481,8 @@ with t_map:
                 "latitude": c["lat"],
                 "longitude": c["lon"],
                 "Campo": c["nome"],
-                "Coltivazioni": ", ".join(
-                    c.get("coltivazioni", [c.get("coltura", "")])
+                "Coltivazione": ", ".join(
+                    c.get("coltura", "")
                 ),
                 "Terreno": c.get("terreno", "Franco")
             }
@@ -1526,7 +1520,7 @@ with t_map:
             "TextLayer",
             data=df_m,
             get_position="[longitude, latitude]",
-            get_text="Coltivazioni",
+            get_text="Coltivazione",
             get_size=12,
             get_color=[70, 80, 70, 255],
             get_alignment_baseline="top",
@@ -1547,13 +1541,13 @@ with t_map:
                 initial_view_state=view,
                 map_style="light",
                 tooltip={
-                    "html": "<b>{Campo}</b><br/>Coltivazioni: {Coltivazioni}<br/>Terreno: {Terreno}",
+                    "html": "<b>{Campo}</b><br/>Coltivazione: {Coltivazione}<br/>Terreno: {Terreno}",
                 }
             ),
             use_container_width=True
         )
 
-        st.caption("I nomi dei campi sono mostrati direttamente sulla mappa; passando sul punto trovi anche coltivazioni e terreno.")
+        st.caption("I nomi dei campi sono mostrati direttamente sulla mappa; passando sul punto trovi anche coltivazione e terreno.")
 
     else:
 
@@ -1573,11 +1567,11 @@ with t_arc:
 
         for campo in st.session_state.archivio:
 
-            coltivazioni_arch = campo.get("coltivazioni") or [campo.get("coltura", "")]
+            coltivazione_arch = campo.get("coltura", "")
             terreno_arch = campo.get("terreno", "Franco")
 
             with st.expander(
-                f"🌾 {campo['nome']} — {', '.join(coltivazioni_arch)}",
+                f"🌾 {campo['nome']} — {coltivazione_arch}",
                 expanded=False
             ):
 
@@ -1609,7 +1603,7 @@ with t_arc:
                     terreno_arch
                 )
 
-                st.write("**Coltivazioni:** " + ", ".join(coltivazioni_arch))
+                st.write("**Coltivazione:** " + coltivazione_arch)
                 st.write(f"**Tipologia terreno:** {terreno_arch}")
                 st.write(
                     f"**Note:** {campo.get('note', '-')}"
