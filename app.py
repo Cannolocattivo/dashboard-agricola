@@ -535,8 +535,12 @@ def coltura_non_ottimale(coltura, terreno):
     terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
     if terreno not in terreni_ok:
         problemi.append({
-            "coltura": n_colt,
-            "terreni_ok": terreni_ok
+            "coltura": coltura,
+            "terreno": terreno,
+            "terreni_ok": terreni_ok,
+            "messaggio": (
+                f"Terreni consigliati: {', '.join(terreni_ok)}."
+            )
         })
     return problemi
 
@@ -708,6 +712,178 @@ with t_mon:
             stato_campo = campo.get("stato", "")
 
             with scheda_campo:
+
+                # Modifica dei parametri del campo già creato.
+                # La modifica aggiorna il campo attivo senza alterare il registro
+                # storico delle giornate già registrate. Al successivo rerun i
+                # Parametri d'Intervento Giornalieri vengono ricalcolati con i nuovi valori.
+                if st.button(
+                    "✏️ Modifica parametri del campo",
+                    key=f"modifica_parametri_{idx}",
+                    use_container_width=True
+                ):
+                    st.session_state[f"modifica_campo_{idx}"] = True
+
+                if st.session_state.get(f"modifica_campo_{idx}", False):
+                    st.info(
+                        "Modifica i parametri del campo. Le registrazioni già presenti "
+                        "nel registro cronologico non verranno riscritte."
+                    )
+
+                    with st.form(f"form_modifica_campo_{idx}"):
+                        m_nome = st.text_input(
+                            "Nome",
+                            value=campo.get("nome", "")
+                        )
+                        m_lat = st.number_input(
+                            "Lat",
+                            value=float(campo.get("lat", 41.8902)),
+                            format="%.4f"
+                        )
+                        m_lon = st.number_input(
+                            "Lon",
+                            value=float(campo.get("lon", 12.4922)),
+                            format="%.4f"
+                        )
+                        m_colt = st.selectbox(
+                            "Coltivazione",
+                            list(DIZIONARIO.keys()),
+                            index=(
+                                list(DIZIONARIO.keys()).index(campo.get("coltura"))
+                                if campo.get("coltura") in DIZIONARIO
+                                else 0
+                            )
+                        )
+                        m_terr = st.selectbox(
+                            "Tipologia di terreno",
+                            TIPI_TERRENO,
+                            index=(
+                                TIPI_TERRENO.index(campo.get("terreno"))
+                                if campo.get("terreno") in TIPI_TERRENO
+                                else 0
+                            )
+                        )
+                        m_port = st.number_input(
+                            "Portata l/h/mq",
+                            min_value=0.0,
+                            value=float(campo.get("portata", 15.0))
+                        )
+                        data_semina_orig = campo.get("data_semina", datetime.now().strftime("%Y-%m-%d"))
+                        try:
+                            data_semina_mod = datetime.strptime(
+                                data_semina_orig, "%Y-%m-%d"
+                            ).date()
+                        except (TypeError, ValueError):
+                            data_semina_mod = datetime.now().date()
+
+                        m_data = st.date_input(
+                            "Data Semina",
+                            value=data_semina_mod
+                        )
+
+                        m_salva, m_annulla = st.columns(2)
+                        with m_salva:
+                            conferma_modifica = st.form_submit_button(
+                                "💾 Salva modifiche",
+                                type="primary",
+                                use_container_width=True
+                            )
+                        with m_annulla:
+                            annulla_modifica = st.form_submit_button(
+                                "Annulla",
+                                use_container_width=True
+                            )
+
+                    if conferma_modifica:
+                        if not m_nome.strip():
+                            st.error("Il nome del campo non può essere vuoto.")
+                        else:
+                            problemi_modifica = coltura_non_ottimale(m_colt, m_terr)
+                            if problemi_modifica:
+                                st.session_state[f"problemi_modifica_campo_{idx}"] = problemi_modifica
+                                st.session_state[f"dati_modifica_campo_{idx}"] = {
+                                    "nome": m_nome.strip(),
+                                    "lat": m_lat,
+                                    "lon": m_lon,
+                                    "coltura": m_colt,
+                                    "terreno": m_terr,
+                                    "portata": m_port,
+                                    "data_semina": m_data.strftime("%Y-%m-%d")
+                                }
+                                st.rerun()
+                            else:
+                                campo.update({
+                                    "nome": m_nome.strip(),
+                                    "lat": m_lat,
+                                    "lon": m_lon,
+                                    "coltura": m_colt,
+                                    "terreno": m_terr,
+                                    "portata": m_port,
+                                    "data_semina": m_data.strftime("%Y-%m-%d")
+                                })
+                                st.session_state.pop(f"problemi_modifica_campo_{idx}", None)
+                                st.session_state.pop(f"dati_modifica_campo_{idx}", None)
+                                st.session_state[f"modifica_campo_{idx}"] = False
+                                salva_dati()
+                                st.success("Parametri del campo aggiornati correttamente.")
+                                st.rerun()
+
+                    if annulla_modifica:
+                        st.session_state[f"modifica_campo_{idx}"] = False
+                        st.session_state.pop(f"problemi_modifica_campo_{idx}", None)
+                        st.session_state.pop(f"dati_modifica_campo_{idx}", None)
+                        st.rerun()
+
+                # Conferma separata quando la nuova combinazione coltura/terreno
+                # non è quella consigliata.
+                problemi_modifica = st.session_state.get(
+                    f"problemi_modifica_campo_{idx}", []
+                )
+                dati_modifica = st.session_state.get(
+                    f"dati_modifica_campo_{idx}", {}
+                )
+                if problemi_modifica and dati_modifica:
+                    st.warning(
+                        f"La combinazione scelta per **{dati_modifica.get('nome', campo['nome'])}** "
+                        "non è quella normalmente consigliata."
+                    )
+                    for problema in problemi_modifica:
+                        st.write(
+                            f"**{problema['coltura']}** → terreno **{problema['terreno']}**. "
+                            f"{problema['messaggio']}"
+                        )
+                    conf_terreno_mod = st.checkbox(
+                        "Voglio comunque utilizzare questo terreno",
+                        key=f"conferma_terreno_modifica_{idx}"
+                    )
+                    c_mod_ok, c_mod_no = st.columns(2)
+                    with c_mod_ok:
+                        if st.button(
+                            "Conferma modifica",
+                            key=f"conferma_modifica_terreno_{idx}",
+                            type="primary",
+                            use_container_width=True,
+                            disabled=not conf_terreno_mod
+                        ):
+                            campo.update(dati_modifica)
+                            st.session_state.pop(f"problemi_modifica_campo_{idx}", None)
+                            st.session_state.pop(f"dati_modifica_campo_{idx}", None)
+                            st.session_state.pop(f"conferma_terreno_modifica_{idx}", None)
+                            st.session_state[f"modifica_campo_{idx}"] = False
+                            salva_dati()
+                            st.success("Parametri del campo aggiornati correttamente.")
+                            st.rerun()
+                    with c_mod_no:
+                        if st.button(
+                            "Annulla modifica",
+                            key=f"annulla_modifica_terreno_{idx}",
+                            use_container_width=True
+                        ):
+                            st.session_state.pop(f"problemi_modifica_campo_{idx}", None)
+                            st.session_state.pop(f"dati_modifica_campo_{idx}", None)
+                            st.session_state.pop(f"conferma_terreno_modifica_{idx}", None)
+                            st.session_state[f"modifica_campo_{idx}"] = False
+                            st.rerun()
 
                 conferma_ok = st.session_state.get("irrigazione_forzata_confermata")
                 if conferma_ok and conferma_ok.get("campo") == campo["nome"]:
