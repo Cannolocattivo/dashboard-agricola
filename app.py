@@ -103,20 +103,23 @@ st.markdown(
         div[data-testid="stMetric"] {
             background: #ffffff;
             border: 1px solid #e2e9e3;
-            border-radius: 14px;
-            padding: 0.9rem 1rem;
-            box-shadow: 0 2px 10px rgba(34, 58, 39, 0.045);
+            border-radius: 11px;
+            padding: 0.45rem 0.7rem;
+            min-height: 0;
+            box-shadow: 0 1px 6px rgba(34, 58, 39, 0.035);
         }
 
         div[data-testid="stMetricLabel"] p {
             color: #6b776f;
-            font-size: 0.78rem;
+            font-size: 0.68rem;
             font-weight: 650;
+            margin-bottom: 0.05rem;
         }
 
         div[data-testid="stMetricValue"] {
             color: #24462c;
-            font-size: 1.45rem;
+            font-size: 1.05rem;
+            line-height: 1.15;
             font-weight: 750;
         }
 
@@ -533,6 +536,12 @@ def registra_giornata(campo, dati_giorno):
     )
 
 
+def registra_evento(campo, evento):
+    registro = campo.setdefault("registro", [])
+    registro.append(evento)
+    registro.sort(key=lambda x: (x.get("data", ""), x.get("ora_rilevazione", "")))
+
+
 def dati_registro(campo, dati_giorno):
     """
     Costruisce una riga completa del registro giornaliero.
@@ -581,6 +590,7 @@ def mostra_registro(campo):
             "Terreno": campo.get("terreno", "Franco"),
             "Data": r.get("data", ""),
             "Ora": r.get("ora_rilevazione", ""),
+            "Evento": r.get("tipo_evento", "giornaliero"),
             "Stato": r.get("stato", ""),
             "Temp.": f"{r.get('temperatura', 0):.1f} °C",
             "Umidità aria": f"{r.get('umidita_aria', 0):.1f} %",
@@ -592,7 +602,12 @@ def mostra_registro(campo):
             "Inizio": r.get("inizio", ""),
             "Fine": r.get("fine", ""),
             "Erogata": f"{r.get('erogata', 0):.1f} mm",
-            "Risparmiata": f"{r.get('risparmiata', 0):.1f} mm"
+            "Risparmiata": f"{r.get('risparmiata', 0):.1f} mm",
+            "Durata irrigazione": (
+                f"{r.get('minuti_irrigazione', 0):.0f} min"
+                if r.get("tipo_evento") == "irrigazione_forzata"
+                else ""
+            )
         })
 
     st.dataframe(
@@ -1015,6 +1030,96 @@ with t_mon:
                         f"vengono gestite insieme: il tempo impostato è quello "
                         f"della richiesta maggiore ({minuti_irr:.0f} minuti)."
                     )
+
+                    # ====================================================
+                    # IRRIGAZIONE FORZATA
+                    # ====================================================
+
+                    st.write("#### 💧 Comando irrigazione")
+
+                    if st.button(
+                        "💧 Forza irrigazione del campo",
+                        key=f"forza_irr_{idx}",
+                        use_container_width=False
+                    ):
+                        st.session_state[f"conferma_irr_{idx}"] = True
+
+                    if st.session_state.get(f"conferma_irr_{idx}", False):
+                        # La forzatura usa il fabbisogno della coltivazione più esigente
+                        # e ignora il blocco automatico dovuto a pioggia o umidità.
+                        acqua_forzata = max(
+                            (x["fabbisogno"] for x in calcoli_irr),
+                            default=0.0
+                        )
+                        minuti_forzati = (
+                            acqua_forzata / campo["portata"] * 60
+                            if campo["portata"] > 0 else 0.0
+                        )
+                        fine_forzata = (
+                            datetime.strptime("06:00", "%H:%M")
+                            + timedelta(minutes=int(minuti_forzati))
+                        ).strftime("%H:%M")
+
+                        st.warning(
+                            f"Stai per avviare manualmente l'irrigazione di **{campo['nome']}** "
+                            f"per circa **{minuti_forzati:.0f} minuti**, pari a **{acqua_forzata:.1f} mm**. "
+                            "La scelta ignorerà le condizioni automatiche attuali."
+                        )
+
+                        c_forza1, c_forza2 = st.columns(2)
+
+                        with c_forza1:
+                            conferma = st.button(
+                                "Conferma irrigazione",
+                                key=f"conferma_forza_{idx}",
+                                type="primary",
+                                use_container_width=True
+                            )
+
+                        with c_forza2:
+                            annulla = st.button(
+                                "Annulla",
+                                key=f"annulla_forza_{idx}",
+                                use_container_width=True
+                            )
+
+                        if annulla:
+                            st.session_state[f"conferma_irr_{idx}"] = False
+                            st.rerun()
+
+                        if conferma:
+                            ora_forzatura = datetime.now()
+                            evento_forzatura = {
+                                "campo": campo["nome"],
+                                "coltivazioni": coltivazioni,
+                                "terreno": terreno,
+                                "data": ora_forzatura.strftime("%Y-%m-%d"),
+                                "ora_rilevazione": ora_forzatura.strftime("%H:%M:%S"),
+                                "stato": "💧 IRRIGAZIONE FORZATA",
+                                "tipo_evento": "irrigazione_forzata",
+                                "confermata": True,
+                                "temperatura": round(temp, 1),
+                                "umidita_aria": round(umid, 1),
+                                "pioggia": round(piog, 1),
+                                "vento": round(vent, 1),
+                                "radiazione": round(rads, 1),
+                                "umidita_suolo": round(soil, 3),
+                                "pioggia_giornaliera": round(p_dom, 1),
+                                "inizio": "06:00",
+                                "fine": fine_forzata,
+                                "erogata": round(acqua_forzata, 1),
+                                "risparmiata": 0.0,
+                                "minuti_irrigazione": round(minuti_forzati, 1),
+                                "coltivazioni_calcolate": calcoli_irr
+                            }
+
+                            registra_evento(campo, evento_forzatura)
+                            salva_dati()
+                            st.session_state[f"conferma_irr_{idx}"] = False
+                            st.success(
+                                f"Irrigazione forzata registrata per {campo['nome']} "
+                                f"({minuti_forzati:.0f} minuti)."
+                            )
 
                     # ====================================================
                     # REGISTRAZIONE AUTOMATICA GIORNALIERA
