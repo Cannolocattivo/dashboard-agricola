@@ -1,10 +1,3 @@
-import streamlit as st
-import requests
-import pandas as pd
-import json
-import pydeck as pdk
-from pathlib import Path
-from datetime import datetime, timedelta
 
 # Configurazione
 
@@ -543,8 +536,6 @@ def coltura_non_ottimale(coltura, terreno):
 
 def salva_nuovo_campo(dati):
     st.session_state.campi.append(dati)
-    salva_dati()
-    st.rerun()
 
 # Pannello laterale
 
@@ -591,7 +582,48 @@ with st.sidebar.form("form_c", clear_on_submit=True):
         datetime.now()
     )
 
-    sub = st.form_submit_button("Salva")
+    col_salva, col_cancella = st.columns(2)
+    
+    with col_salva:
+        if st.button(
+            "Salva e chiudi campo",
+            key=f"salva_chiudi_{campo['nome']}"
+        ):
+            st.session_state[f"conferma_salva_{campo['nome']}"] = True
+    
+    with col_cancella:
+        if st.button(
+            "Cancella senza salvare",
+            key=f"cancella_campo_{campo['nome']}"
+        ):
+            st.session_state[f"conferma_cancella_{campo['nome']}"] = True
+    
+    if st.session_state.get(f"conferma_salva_{campo['nome']}", False):
+        st.warning("Vuoi davvero salvare le modifiche e chiudere il campo?")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Conferma salvataggio", key=f"ok_salva_{campo['nome']}"):
+                salva_dati()
+                st.session_state[f"conferma_salva_{campo['nome']}"] = False
+                st.session_state[f"campo_aperto_{campo['nome']}"] = False
+                st.rerun()
+        with c2:
+            if st.button("Annulla", key=f"annulla_salva_{campo['nome']}"):
+                st.session_state[f"conferma_salva_{campo['nome']}"] = False
+                st.rerun()
+    
+    if st.session_state.get(f"conferma_cancella_{campo['nome']}", False):
+        st.warning("Vuoi davvero cancellare le modifiche senza salvare?")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Conferma cancellazione", key=f"ok_cancella_{campo['nome']}"):
+                st.session_state[f"conferma_cancella_{campo['nome']}"] = False
+                st.session_state[f"campo_aperto_{campo['nome']}"] = False
+                st.rerun()
+        with c2:
+            if st.button("Annulla", key=f"annulla_cancella_{campo['nome']}"):
+                st.session_state[f"conferma_cancella_{campo['nome']}"] = False
+                st.rerun()
 
     if sub and n_nome and n_colt:
         nuovo_campo = {
