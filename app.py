@@ -1,163 +1,22 @@
+import streamlit as st
+import requests
+import pandas as pd
+import json
+import pydeck as pdk
+from pathlib import Path
+from datetime import datetime, timedelta
 
-       background: linear-gradient(180deg, #f6f8f5 0%, #ffffff 28%);
-        }
+# Configurazione
 
-      .block-container {
-          max-width: 1450px;
-          padding-top: 1.35rem;
-          padding-bottom: 2.5rem;
-        }
+st.set_page_config(
+    page_title="AgriSmart",
+    page_icon="🌱",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-        /* Header */
-        .agri-header {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            margin-bottom: 1.15rem;
-        }
-
-        .agri-logo {
-            width: 48px;
-            height: 48px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 14px;
-            background: #e8f3e9;
-            font-size: 25px;
-            box-shadow: inset 0 0 0 1px #d6e8d8;
-        }
-
-        .agri-title {
-            margin: 0;
-            color: #203126;
-            font-size: 2rem;
-            font-weight: 750;
-            letter-spacing: -0.03em;
-        }
-
-        .agri-subtitle {
-            margin: 2px 0 0 0;
-            color: #6a756e;
-            font-size: 0.93rem;
-        }
-
-        /* Sidebar */
-        section[data-testid="stSidebar"] {
-            background: #f7faf7;
-            border-right: 1px solid #e5ebe6;
-        }
-
-        section[data-testid="stSidebar"] .block-container {
-            padding-top: 1.2rem;
-        }
-
-        section[data-testid="stSidebar"] h2,
-        section[data-testid="stSidebar"] h3 {
-            color: #28412f;
-        }
-
-        /* Tabs */
-        button[data-baseweb="tab"] {
-            font-weight: 650;
-            color: #68736b;
-            padding-top: 0.75rem;
-            padding-bottom: 0.75rem;
-        }
-
-        button[data-baseweb="tab"][aria-selected="true"] {
-            color: #275a32;
-        }
-
-        div[data-baseweb="tab-highlight"] {
-            background-color: #3c7d48;
-            height: 3px;
-            border-radius: 3px;
-        }
-
-        /* Metriche */
-        div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid #e2e9e3;
-            border-radius: 11px;
-            padding: 0.45rem 0.7rem;
-            min-height: 0;
-            box-shadow: 0 1px 6px rgba(34, 58, 39, 0.035);
-        }
-
-        div[data-testid="stMetricLabel"] p {
-            color: #6b776f;
-            font-size: 0.68rem;
-            font-weight: 650;
-            margin-bottom: 0.05rem;
-        }
-
-        div[data-testid="stMetricValue"] {
-            color: #24462c;
-            font-size: 1.05rem;
-            line-height: 1.15;
-            font-weight: 750;
-        }
-
-        /* Schede campi */
-        div[data-testid="stExpander"] {
-            border: 1px solid #dfe7e1;
-            border-radius: 16px;
-            overflow: hidden;
-            background: #ffffff;
-            box-shadow: 0 4px 16px rgba(37, 62, 42, 0.045);
-            margin-bottom: 0.8rem;
-        }
-
-        div[data-testid="stExpander"] summary {
-            background: #fbfdfb;
-            padding-top: 0.95rem !important;
-            padding-bottom: 0.95rem !important;
-        }
-
-        div[data-testid="stExpander"] summary:hover {
-            background: #f6faf6;
-        }
-
-        /* Tabelle */
-        div[data-testid="stDataFrame"] {
-            border: 1px solid #e1e8e2;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 2px 10px rgba(35, 54, 41, 0.035);
-        }
-
-        /* Pulsanti */
-        .stButton > button,
-        .stFormSubmitButton > button {
-            border-radius: 10px;
-            font-weight: 650;
-            min-height: 2.5rem;
-        }
-
-        .stButton > button:hover,
-        .stFormSubmitButton > button:hover {
-            border-color: #4b8b57;
-            color: #275a32;
-        }
-
-        /* Input */
-        div[data-baseweb="input"] > div,
-        div[data-baseweb="select"] > div,
-        div[data-baseweb="textarea"] > div {
-            border-radius: 10px;
-        }
-
-        /* Messaggi */
-        div[data-testid="stAlert"] {
-            border-radius: 12px;
-        }
-
-        hr {
-            border-color: #e6ece7;
-            margin: 1.2rem 0;
-        }
-    </style>
+st.markdown(
+   """
 
     <div class="agri-header">
         <div class="agri-logo">🌱</div>
