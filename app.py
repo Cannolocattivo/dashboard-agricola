@@ -496,10 +496,14 @@ def mostra_registro(campo):
     righe = []
 
     for r in reversed(registro):
+        # I parametri visualizzati nel registro devono essere quelli
+        # effettivamente associati alla singola registrazione, non quelli
+        # attualmente impostati sul campo. In questo modo, dopo una
+        # modifica del campo, lo storico conserva i parametri precedenti.
         righe.append({
-            "Campo": campo.get("nome", ""),
-            "Coltivazione": campo.get("coltura", ""),
-            "Terreno": campo.get("terreno", "Franco"),
+            "Campo": r.get("campo", campo.get("nome", "")),
+            "Coltivazione": r.get("coltura", campo.get("coltura", "")),
+            "Terreno": r.get("terreno", campo.get("terreno", "Franco")),
             "Data": r.get("data", ""),
             "Ora": r.get("ora_rilevazione", ""),
             "Evento": r.get("tipo_evento", "giornaliero"),
