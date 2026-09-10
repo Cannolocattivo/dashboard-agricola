@@ -1,24 +1,4 @@
-import streamlit as st
-import requests
-import pandas as pd
-import json
-import pydeck as pdk
-from pathlib import Path
-from datetime import datetime, timedelta
 
-# Configurazione
-
-st.set_page_config(
-    page_title="AgriSmart",
-    page_icon="🌱",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.markdown(
-   """
-   <style>
-     .stApp {
        background: linear-gradient(180deg, #f6f8f5 0%, #ffffff 28%);
         }
 
@@ -560,7 +540,9 @@ if "dati_caricati" not in st.session_state:
                 "terreno": "Franco",
                 "portata": 15.0,
                 "data_semina": datetime.now().strftime("%Y-%m-%d"),
-                "registro": []
+                "registro": [],
+            "irrigazione_attiva": False,
+            "irrigazione_forzata": False
             }
         ]
 
