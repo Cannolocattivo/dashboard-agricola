@@ -557,8 +557,7 @@ if "dati_caricati" not in st.session_state:
                 "lat": 41.9028,
                 "lon": 12.4964,
                 "coltura": "Pomodoro",
-                "coltivazioni": ["Pomodoro"],
-                "terreno": "Franco",
+                                "terreno": "Franco",
                 "portata": 15.0,
                 "data_semina": datetime.now().strftime("%Y-%m-%d"),
                 "registro": []
@@ -568,16 +567,12 @@ if "dati_caricati" not in st.session_state:
     for campo in st.session_state.campi:
         campo.setdefault("registro", [])
         campo.setdefault("terreno", "Franco")
-        if not campo.get("coltivazioni"):
-            campo["coltivazioni"] = [campo.get("coltura", "Pomodoro")]
-        campo["coltura"] = campo["coltivazioni"][0]
+        campo.setdefault("coltura", "Pomodoro")
 
     for campo in st.session_state.archivio:
         campo.setdefault("registro", [])
         campo.setdefault("terreno", "Franco")
-        if not campo.get("coltivazioni"):
-            campo["coltivazioni"] = [campo.get("coltura", "Pomodoro")]
-        campo["coltura"] = campo["coltivazioni"][0]
+        campo.setdefault("coltura", "Pomodoro")
 
     st.session_state.dati_caricati = True
 
@@ -665,7 +660,7 @@ def mostra_registro(campo):
     for r in reversed(registro):
         righe.append({
             "Campo": campo.get("nome", ""),
-            "Coltivazioni": ", ".join(campo.get("coltivazioni", [campo.get("coltura", "")])),
+            "Coltivazione": campo.get("coltura", ""),
             "Terreno": campo.get("terreno", "Franco"),
             "Data": r.get("data", ""),
             "Ora": r.get("ora_rilevazione", ""),
@@ -699,7 +694,7 @@ def mostra_registro(campo):
 def colture_non_ottimali(coltivazioni, terreno):
     """Restituisce le colture che non sono nella fascia di terreno consigliata."""
     problemi = []
-    for coltura in coltivazioni:
+    for coltura in [coltura]:
         terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
         if terreno not in terreni_ok:
             problemi.append({
@@ -737,11 +732,10 @@ with st.sidebar.form("form_c", clear_on_submit=True):
         format="%.4f"
     )
 
-    n_colt = st.multiselect(
-        "Coltivazioni",
+    n_colt = st.selectbox(
+        "Coltivazione",
         list(DIZIONARIO.keys()),
-        default=["Pomodoro"],
-        help="Puoi associare più coltivazioni allo stesso campo."
+        index=list(DIZIONARIO.keys()).index("Pomodoro") if "Pomodoro" in DIZIONARIO else 0
     )
 
     n_terr = st.selectbox(
@@ -767,8 +761,7 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "nome": n_nome,
             "lat": n_lat,
             "lon": n_lon,
-            "coltura": n_colt[0],
-            "coltivazioni": n_colt,
+            "coltura": n_colt,
             "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
@@ -844,7 +837,7 @@ with t_mon:
     else:
         totale_campi = len(st.session_state.campi)
         totale_colture = sum(
-            len(c.get("coltivazioni") or [c.get("coltura", "")])
+            1
             for c in st.session_state.campi
         )
         terreni_presenti = len(set(
@@ -863,11 +856,11 @@ with t_mon:
             st.session_state.campi
         ):
 
-            coltivazioni = campo.get("coltivazioni") or [campo.get("coltura", "Pomodoro")]
+            coltura = campo.get("coltura", "Pomodoro")
             terreno = campo.get("terreno", "Franco")
 
             with st.expander(
-                f"🌿 {campo['nome']} — {', '.join(coltivazioni)}",
+                f"🌿 {campo['nome']} — {campo.get('coltura', '')}",
                 expanded=True
             ):
 
@@ -899,10 +892,7 @@ with t_mon:
                 p_prev = dly.get("rain_sum", [0.0])
                 p_dom = p_prev[0] if p_prev else 0.0
 
-                st.write("### 🌤️ Condizioni attuali")
-                if meteo_aggiornato:
-                    st.caption("Meteo aggiornato correttamente.")
-                else:
+                if not meteo_aggiornato:
                     st.warning(meteo_nota)
 
                 meteo_pronto = bool(meteo_aggiornato or campo.get("ultimo_meteo"))
@@ -913,7 +903,31 @@ with t_mon:
                 # RIEPILOGO
                 # ====================================================
 
-                st.write("### 🌤️ Condizioni attuali")
+                ultimo_aggiornamento = campo.get("ultimo_meteo", {}).get("aggiornato")
+
+                if ultimo_aggiornamento:
+                    try:
+                        ultimo_aggiornamento = datetime.strptime(
+                            ultimo_aggiornamento, "%Y-%m-%d %H:%M:%S"
+                        ).strftime("%d/%m/%Y %H:%M:%S")
+                    except ValueError:
+                        pass
+
+                testo_meteo = (
+                    f"Meteo aggiornato correttamente. Ultimo aggiornamento: {ultimo_aggiornamento}"
+                    if ultimo_aggiornamento
+                    else "Meteo aggiornato correttamente."
+                )
+
+                st.markdown(
+                    f"""
+                    <div style="display:flex; align-items:baseline; gap:12px; margin:0.75rem 0 0.5rem 0;">
+                        <h3 style="margin:0; font-size:1.17rem; line-height:1.3;">🌤️ Condizioni attuali</h3>
+                        <span style="color:#6b776f; font-size:0.8rem;">{testo_meteo}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
                 c1, c2, c3, c4, c5, c6 = st.columns(6)
 
@@ -960,7 +974,7 @@ with t_mon:
                 fattore_terreno = FATTORE_TERRENO.get(terreno, 1.0)
                 calcoli_irr = []
 
-                for coltura in coltivazioni:
+                for coltura in [coltura]:
                     info = DIZIONARIO[coltura]
                     fabb = info["fabbisogno"] * fattore_terreno
                     sogl = info["soglia_umidita"]
