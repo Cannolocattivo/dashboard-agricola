@@ -535,7 +535,7 @@ def coltura_non_ottimale(coltura, terreno):
     terreni_ok = TERRENI_OTTIMALI.get(coltura, TIPI_TERRENO)
     if terreno not in terreni_ok:
         problemi.append({
-            "coltura": coltura,
+            "coltura": n_colt,
             "terreni_ok": terreni_ok
         })
     return problemi
@@ -543,6 +543,8 @@ def coltura_non_ottimale(coltura, terreno):
 
 def salva_nuovo_campo(dati):
     st.session_state.campi.append(dati)
+    salva_dati()
+    st.rerun()
 
 # Pannello laterale
 
@@ -589,6 +591,8 @@ with st.sidebar.form("form_c", clear_on_submit=True):
         datetime.now()
     )
 
+    sub = st.form_submit_button("Salva")
+
     if sub and n_nome and n_colt:
         nuovo_campo = {
             "nome": n_nome,
@@ -598,7 +602,9 @@ with st.sidebar.form("form_c", clear_on_submit=True):
             "terreno": n_terr,
             "portata": n_port,
             "data_semina": n_data.strftime("%Y-%m-%d"),
-            "registro": []
+            "registro": [],
+            "irrigazione_attiva": False,
+            "irrigazione_forzata": False
         }
 
         problemi_terreno = coltura_non_ottimale(n_colt, n_terr)
