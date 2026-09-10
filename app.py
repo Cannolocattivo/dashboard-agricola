@@ -683,22 +683,31 @@ with t_mon:
         st.markdown("<hr>", unsafe_allow_html=True)
 
 
-        for idx, campo in enumerate(
-            st.session_state.campi
+        # Ogni campo viene gestito come una scheda indipendente,
+        # visualizzata in un TabControl. In questo modo i campi non
+        # occupano verticalmente tutta la pagina e si lavora su un
+        # campo alla volta.
+        etichette_campi = []
+        for campo in st.session_state.campi:
+            coltura_tab = campo.get("coltura", "Pomodoro")
+            stato_tab = campo.get("stato", "")
+            etichetta_tab = f"🌿 {campo['nome']} — {coltura_tab}"
+            if stato_tab == "campo cancellato":
+                etichetta_tab += " — campo cancellato"
+            etichette_campi.append(etichetta_tab)
+
+        schede_campi = st.tabs(etichette_campi)
+
+        for idx, (campo, scheda_campo) in enumerate(
+            zip(st.session_state.campi, schede_campi)
         ):
 
             coltura = campo.get("coltura", "Pomodoro")
             terreno = campo.get("terreno", "Franco")
 
             stato_campo = campo.get("stato", "")
-            titolo_campo = f"🌿 {campo['nome']} — {coltura}"
-            if stato_campo == "campo cancellato":
-                titolo_campo += " — campo cancellato"
 
-            with st.expander(
-                titolo_campo,
-                expanded=not st.session_state.get(f"campo_chiuso_{idx}", False)
-            ):
+            with scheda_campo:
 
                 conferma_ok = st.session_state.get("irrigazione_forzata_confermata")
                 if conferma_ok and conferma_ok.get("campo") == campo["nome"]:
@@ -1424,30 +1433,27 @@ with t_mon:
                             type="primary",
                             use_container_width=True
                         ):
-                            # Se il campo esiste già nei dati salvati, non lo
-                            # eliminiamo fisicamente: lo manteniamo nello storico
-                            # e lo marchiamo come "campo cancellato".
-                            campo_salvato = False
-                            for campo_salvato_item in st.session_state.get("campi", []):
-                                if (
-                                    campo_salvato_item.get("nome") == campo.get("nome")
-                                    and campo_salvato_item is not campo
-                                ):
-                                    campo_salvato = True
-                                    campo_salvato_item["stato"] = "campo cancellato"
-                                    campo_salvato_item["campo_cancellato"] = True
-                                    campo_salvato_item["data_cancellazione"] = (
-                                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    )
+                            # Non eliminiamo il campo fisicamente: lo
+                            # manteniamo nello storico e lo marchiamo
+                            # come "campo cancellato".
+                            campo["stato"] = "campo cancellato"
+                            campo["campo_cancellato"] = True
+                            campo["data_cancellazione"] = (
+                                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            )
 
-                            # Se invece il campo non era ancora presente tra i
-                            # dati salvati, vengono semplicemente annullate le
-                            # modifiche correnti.
+                            st.session_state.archivio.append(
+                                campo.copy()
+                            )
+
+                            st.session_state.campi.pop(
+                                idx
+                            )
+
+                            salva_dati()
+
                             st.session_state[f"richiesta_cancella_{idx}"] = False
                             st.session_state[f"campo_chiuso_{idx}"] = True
-
-                            if campo_salvato:
-                                salva_dati()
 
                             st.rerun()
 
