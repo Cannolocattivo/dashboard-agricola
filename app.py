@@ -1391,8 +1391,12 @@ with t_mon:
                                 )
                             })
 
-                            # Il campo raccolto passa nello storico
-                            # mantenendo TUTTO il registro.
+                            # Il campo salvato e chiuso passa nello storico
+                            # come "campo raccolto", mantenendo TUTTO il registro.
+                            campo["stato"] = "campo raccolto"
+                            campo["campo_raccolto"] = True
+                            campo["data_raccolta"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
                             st.session_state.archivio.append(
                                 campo.copy()
                             )
@@ -1565,9 +1569,16 @@ with t_arc:
 
             coltivazione_arch = campo.get("coltura", "")
             terreno_arch = campo.get("terreno", "Franco")
+            stato_arch = campo.get("stato", "")
+
+            # Nel nome dello storico evidenziamo esplicitamente i campi
+            # cancellati; i campi salvati e chiusi restano con il loro nome.
+            nome_arch = f"🌾 {campo['nome']} — {coltivazione_arch}"
+            if stato_arch == "campo cancellato":
+                nome_arch += " — campo cancellato"
 
             with st.expander(
-                f"🌾 {campo['nome']} — {coltivazione_arch}",
+                nome_arch,
                 expanded=False
             ):
 
@@ -1601,9 +1612,15 @@ with t_arc:
 
                 st.write("**Coltivazione:** " + coltivazione_arch)
                 st.write(f"**Tipologia terreno:** {terreno_arch}")
-                st.write(
-                    f"**Note:** {campo.get('note', '-')}"
-                )
+
+                if stato_arch == "campo raccolto":
+                    st.write("**Descrizione:** campo raccolto")
+                elif stato_arch == "campo cancellato":
+                    st.write("**Descrizione:** campo cancellato")
+                else:
+                    st.write(
+                        f"**Note:** {campo.get('note', '-')}"
+                    )
 
                 st.write(
                     "### 📚 Registro cronologico completo"
