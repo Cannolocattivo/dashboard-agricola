@@ -1,4 +1,5 @@
-
+import streamlit as st
+import requests
 import pandas as pd
 import json
 import pydeck as pdk
@@ -1067,7 +1068,7 @@ with t_mon:
 
                     minuti = (acqua / campo["portata"]) * 60 if campo["portata"] > 0 else 0
                     calcoli_irr.append({
-                        "coltura": n_colt,
+                        "coltura": coltura,
                         "fabbisogno": fabb,
                         "soglia": sogl,
                         "stato": stato_colt,
@@ -1317,7 +1318,7 @@ with t_mon:
 
                 dati_giorno = {
                     "campo": campo["nome"],
-                    "coltura": n_colt,
+                    "coltura": campo.get("coltura", ""),
                     "terreno": terreno,
                     "tipo_evento": "giornaliero",
                     "data": oggi,
