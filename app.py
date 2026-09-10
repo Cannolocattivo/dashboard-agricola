@@ -732,7 +732,7 @@ with st.sidebar.form("form_c", clear_on_submit=True):
     n_colt = st.selectbox(
         "Coltivazione",
         list(DIZIONARIO.keys()),
-        default=["Pomodoro"],
+        index=list(DIZIONARIO.keys()).index("Pomodoro") if "Pomodoro" in DIZIONARIO else 0,
     )
 
     n_terr = st.selectbox(
