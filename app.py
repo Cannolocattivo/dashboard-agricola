@@ -1249,6 +1249,7 @@ with t_mon:
                                 "Tipo": "Forzatura manuale",
                                 "Stato": evento.get("stato", "💧 IRRIGAZIONE FORZATA"),
                                 "Giorno": datetime.strptime(evento["data"], "%Y-%m-%d").strftime("%d/%m/%Y"),
+                                "_ora_evento": evento.get("ora_rilevazione", "00:00:00"),
                                 "Temp. Aria": f"{evento.get('temperatura', 0):.1f} °C",
                                 "Umidità Aria": f"{evento.get('umidita_aria', 0):.0f} %",
                                 "Pioggia": f"{evento.get('pioggia', 0):.1f} mm",
@@ -1262,6 +1263,38 @@ with t_mon:
                                 "Durata": f"{evento.get('minuti_irrigazione', 0):.0f} min",
                                 "Risparmiata": "0.0 mm"
                             })
+
+                    # Mettiamo sempre l'evento più recente in alto.
+                    # Per la riga automatica usiamo l'orario di rilevazione;
+                    # per le forzature usiamo l'orario in cui sono state autorizzate.
+                    def _ordine_intervento(riga):
+                        if riga.get("Tipo") == "Forzatura manuale":
+                            try:
+                                return datetime.strptime(
+                                    riga.get("Giorno", "01/01/1970") + " " + riga.get("_ora_evento", "00:00:00"),
+                                    "%d/%m/%Y %H:%M:%S"
+                                )
+                            except ValueError:
+                                return datetime.min
+
+                        try:
+                            return datetime.strptime(
+                                riga.get("Giorno", "01/01/1970") + " " + riga.get("_ora_evento", "00:00:00"),
+                                "%d/%m/%Y %H:%M:%S"
+                            )
+                        except ValueError:
+                            return datetime.min
+
+                    righe_intervento[0]["_ora_evento"] = ora_rilevazione
+
+                    for riga in righe_intervento[1:]:
+                        if not riga.get("_ora_evento"):
+                            riga["_ora_evento"] = "00:00:00"
+
+                    righe_intervento.sort(key=_ordine_intervento, reverse=True)
+
+                    for riga in righe_intervento:
+                        riga.pop("_ora_evento", None)
 
                     df_oggi = pd.DataFrame(righe_intervento)
 
