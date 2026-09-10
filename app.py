@@ -656,7 +656,7 @@ if st.session_state.get("campo_da_confermare"):
 
 t_mon, t_map, t_arc = st.tabs([
     "📊 Monitoraggio parametri",
-    "🗺️ Mappa campi",
+    "🗺️ Mappa dei campi",
     "🗄️ Archivio campi chiusi "
 ])
 
@@ -1306,8 +1306,8 @@ with t_mon:
                             key=f"n_{idx}"
                         )
 
-                    btn = st.form_submit_button(
-                        "🎉 Salva"
+                    ##btn = st.form_submit_button(
+                     ##   "🎉 Salva"
                     )
 
                     if btn:
